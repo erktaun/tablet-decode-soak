@@ -1,10 +1,11 @@
-# Tablet decode soak test (Experiments 0 and 1)
+# Tablet decode soak test and detector benchmark (Experiments 0, 1 and 2)
 
 Can one budget Android tablet decode several store cameras at once, all day, without overheating or
-dropping frames? And how much CPU does that leave for detection?
+dropping frames? How much CPU does that leave, and how fast does a detector run in it?
 
 - **Experiment 0:** asks the tablet for its hardware decoder limits, and checks how many decoders really start at once. Takes 1 minute.
 - **Experiment 1:** runs 4 camera streams through the tablet's hardware decoder for 30 minutes to 24 hours. Five times a second, each stream's frame is shrunk on the GPU to the detector's input size and read into memory as a model input. That's the work a detector's input step would do. The size is 320 px by default, or 640 px for small objects. Every 5 s the test logs frame rate, lost frames, delay, thermal status, temperatures, CPU and memory.
+- **Experiment 2:** times three detector models on the tablet's CPU, GPU and NPU, also while 4 streams decode. See [Experiment 2](#experiment-2-detector-speed).
 
 The laptop plays the cameras: it serves 4 looping RTSP video streams over Wi-Fi. The tablet runs a small test app (`prebuilt/soak.apk`), and one script on the laptop drives everything over a USB cable.
 
@@ -87,6 +88,40 @@ Run every command from the repo folder, with the tablet plugged in and unlocked.
 - `--serial`: picks a device when several are connected.
 - `--sink yuv`: hands full frames to the CPU. It crashes on some Qualcomm devices.
 - `--sink private`: decodes only.
+
+## Experiment 2: detector speed
+
+How fast does a detector run on the tablet, on the CPU, the GPU or an NPU? This uses TensorFlow Lite's own benchmark tool (`prebuilt/benchmark_model`) on three ready-made models:
+
+| Model | What it is |
+|---|---|
+| `yolo11n` | The smallest standard YOLO detector (80 everyday classes). It is the likely base for a fine-tuned store model |
+| `yolo26n` | The newest small YOLO, built for edge devices: no separate box-merging step |
+| `yoloe-11s` | The open-vocabulary model from the ingredient demo, prompts baked in (person, sandwich, gloved hand, box). It is larger: the upper bound |
+
+Each model is tested at **320 and 640 px**, as **FP32 and INT8**. Each is tried on **CPU with 1, 2 and 4 threads, GPU and NNAPI**; NNAPI is Android's route to an NPU, if the tablet's vendor ships a driver. On first use the script downloads the models (about 150 MB) from this repo's release page and checks their checksums.
+
+| Run | Command | Time | What it answers |
+|---|---|---|---|
+| F | `python3 bench_model.py --quick` | 15 min | Speed of each model and size on the 4-thread CPU, GPU and NNAPI |
+| G | `python3 bench_model.py --quick --under-load --sustained 300` | 35 min | The same while the tablet decodes 4 streams (as in run B), plus 5 minutes non-stop to see heat build up. **The number that decides** |
+| H | `python3 bench_model.py` | 25 min | The full matrix, including 1 and 2 CPU threads. Optional |
+
+- Run them after run B, with the tablet plugged in, unlocked and cool: the screen can dim, but wait 10 minutes after a long run.
+- `--under-load` starts run B's local decoding in the background (the results folder ends in `under-load-bench`). Then it repeats the fastest configs, so decoding and detection compete as they would in a store.
+- Stop early with **Ctrl-C**. A config runs at most about 30 s, so nothing stays running on the tablet for long.
+- `--models`, `--sizes 320 640`, `--precisions fp32 int8`, `--delegates cpu1 cpu2 cpu4 gpu nnapi` and `--secs` pick a subset.
+
+**Reading `summary.md`:**
+- The first table gives the fastest processor per model and size. It also gives the **headroom**: fps divided by the roughly 12 detections/s the draft workload needs for the whole store (assembly 5, order box 5, queue 1, tables 1).
+  - A headroom above 1 **under load** means one model can serve every camera at those rates.
+  - Below 1, the store needs a smaller model, a lower input size, fewer detections, or other hardware.
+- "Ops on accelerator" shows how much of the model really ran on the GPU or NPU. The rest falls back to the CPU.
+- NNAPI with no NPU driver quietly runs on the CPU, and the report marks those rows. In our trial on a Snapdragon phone, NNAPI listed only `nnapi-reference`, the CPU fallback, because Qualcomm no longer ships an NNAPI driver. MediaTek chips like the Redmi's may still have one.
+- Not included: resizing the frame (the soak test measured that: 1-5 ms) and decoding boxes, about 1-2 ms.
+- `models/manifest.json` shows how many of PyTorch's detections each file reproduces. FP32 reproduces all of them. INT8 reproduces 75-90%: quantization shifts boxes and confidences, so boxes near the threshold appear or vanish. Whether that matters is a question for Experiment 4 on store footage.
+
+To rebuild the models (other prompts, sizes or a fine-tuned model), see `export_models.py`. You don't need it for the runs.
 
 ## Stopping and collecting
 
@@ -176,6 +211,8 @@ Every test frame carries a small barcode in its top strip with the frame number.
 | `make_clips.py` | Encodes the camera-like clips with the frame barcode |
 | `plot_run.py` | `summary.md` + `report.png` for a run folder: `python3 plot_run.py results/<run_id>` |
 | `sampler.sh` | Runs on the tablet over adb: system CPU, clocks, thermal zones |
+| `bench_model.py` | Experiment 2: pushes `prebuilt/benchmark_model` (TensorFlow Lite's benchmark tool, Android arm64) and the models, runs every config, writes `summary.md` |
+| `export_models.py`, `models/manifest.json` | How the models were made (Ultralytics 8.4.175, LiteRT export), their checksums and accuracy versus PyTorch |
 | `android/` | The app (Kotlin, media3 ExoPlayer 1.4.1), prebuilt as `prebuilt/soak.apk` |
 
 To rebuild the app (needs JDK 17 or newer and the Android SDK):

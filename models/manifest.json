@@ -1,0 +1,214 @@
+{
+ "yolo11n_320_fp32.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 0,
+   "frames": 40,
+   "mean_iou": 1.0,
+   "reproduced": 93,
+   "reproduced_pct": 100.0,
+   "torch_boxes": 93
+  },
+  "bytes": 10688101,
+  "model": "yolo11n",
+  "precision": "fp32",
+  "prompts": null,
+  "sha256": "81c35ec86847dc4fd3dac18955687e1c03d4162cbf219f1731c50636ce29ebde",
+  "size": 320
+ },
+ "yolo11n_320_int8.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 3,
+   "frames": 40,
+   "mean_iou": 0.926,
+   "reproduced": 80,
+   "reproduced_pct": 86.0,
+   "torch_boxes": 93
+  },
+  "bytes": 3067550,
+  "model": "yolo11n",
+  "precision": "int8",
+  "prompts": null,
+  "sha256": "fe1d51900c98f7f292ac7b4273f61dcf0dbd0c6b880514072b6dac80bbbb00fe",
+  "size": 320
+ },
+ "yolo11n_640_fp32.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 0,
+   "frames": 40,
+   "mean_iou": 1.0,
+   "reproduced": 150,
+   "reproduced_pct": 100.0,
+   "torch_boxes": 150
+  },
+  "bytes": 10763699,
+  "model": "yolo11n",
+  "precision": "fp32",
+  "prompts": null,
+  "sha256": "f8eb8be9c30b706c518c6bf2ad387c30fb822dd31d4109b45a8af67bd6aced03",
+  "size": 640
+ },
+ "yolo11n_640_int8.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 14,
+   "frames": 40,
+   "mean_iou": 0.896,
+   "reproduced": 127,
+   "reproduced_pct": 84.7,
+   "torch_boxes": 150
+  },
+  "bytes": 3086431,
+  "model": "yolo11n",
+  "precision": "int8",
+  "prompts": null,
+  "sha256": "910cf90b672cbdf243e07f9dc5906c355c2431416ec659e5308b63ff0d062def",
+  "size": 640
+ },
+ "yolo26n_320_fp32.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 0,
+   "frames": 40,
+   "mean_iou": 1.0,
+   "reproduced": 82,
+   "reproduced_pct": 100.0,
+   "torch_boxes": 82
+  },
+  "bytes": 9894793,
+  "model": "yolo26n",
+  "precision": "fp32",
+  "prompts": null,
+  "sha256": "5e58a501dfefa6ae2a3c79eba41b25f114f3ee38af0df4803f51452f736e78ab",
+  "size": 320
+ },
+ "yolo26n_320_int8.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 9,
+   "frames": 40,
+   "mean_iou": 0.926,
+   "reproduced": 72,
+   "reproduced_pct": 87.8,
+   "torch_boxes": 82
+  },
+  "bytes": 2912177,
+  "model": "yolo26n",
+  "precision": "int8",
+  "prompts": null,
+  "sha256": "aa1e798b7f6985de8467985b612535af1c5d7c5525c934760b144e6ad043cb27",
+  "size": 320
+ },
+ "yolo26n_640_fp32.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 0,
+   "frames": 40,
+   "mean_iou": 1.0,
+   "reproduced": 128,
+   "reproduced_pct": 100.0,
+   "torch_boxes": 128
+  },
+  "bytes": 9970396,
+  "model": "yolo26n",
+  "precision": "fp32",
+  "prompts": null,
+  "sha256": "9ebaac206357ee238fbd9115c00d6e382fa828a2f49a5be9cabd05aec2d2974f",
+  "size": 640
+ },
+ "yolo26n_640_int8.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 17,
+   "frames": 40,
+   "mean_iou": 0.884,
+   "reproduced": 96,
+   "reproduced_pct": 75.0,
+   "torch_boxes": 128
+  },
+  "bytes": 2931056,
+  "model": "yolo26n",
+  "precision": "int8",
+  "prompts": null,
+  "sha256": "65a91b63cd6eb201b326fedebe295996d333eeb5d46f64cd001843b258554f05",
+  "size": 640
+ },
+ "yoloe-11s_320_fp32.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 2,
+   "frames": 40,
+   "mean_iou": 1.0,
+   "reproduced": 67,
+   "reproduced_pct": 100.0,
+   "torch_boxes": 67
+  },
+  "bytes": 40520957,
+  "model": "yoloe-11s",
+  "precision": "fp32",
+  "prompts": [
+   "person",
+   "sandwich",
+   "gloved hand",
+   "box"
+  ],
+  "sha256": "77c6f4ef3203a4d2e9d5fccecc77a701ce32dfb7cdee5ac8a6a3c89671098c74",
+  "size": 320
+ },
+ "yoloe-11s_320_int8.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 37,
+   "frames": 40,
+   "mean_iou": 0.879,
+   "reproduced": 60,
+   "reproduced_pct": 89.6,
+   "torch_boxes": 67
+  },
+  "bytes": 10751855,
+  "model": "yoloe-11s",
+  "precision": "int8",
+  "prompts": [
+   "person",
+   "sandwich",
+   "gloved hand",
+   "box"
+  ],
+  "sha256": "42f27c4fcc3774eb7712df67d3aaf9afca14ef3a19c3d70cb83d83625d126789",
+  "size": 320
+ },
+ "yoloe-11s_640_fp32.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 1,
+   "frames": 40,
+   "mean_iou": 1.0,
+   "reproduced": 55,
+   "reproduced_pct": 100.0,
+   "torch_boxes": 55
+  },
+  "bytes": 40596557,
+  "model": "yoloe-11s",
+  "precision": "fp32",
+  "prompts": [
+   "person",
+   "sandwich",
+   "gloved hand",
+   "box"
+  ],
+  "sha256": "091e6ca1fcd14774acb50eab0eb65a3bde6f50b27d313dc4f727b2e470c76c18",
+  "size": 640
+ },
+ "yoloe-11s_640_int8.tflite": {
+  "accuracy_vs_pytorch": {
+   "extra_boxes": 18,
+   "frames": 40,
+   "mean_iou": 0.827,
+   "reproduced": 45,
+   "reproduced_pct": 81.8,
+   "torch_boxes": 55
+  },
+  "bytes": 10770464,
+  "model": "yoloe-11s",
+  "precision": "int8",
+  "prompts": [
+   "person",
+   "sandwich",
+   "gloved hand",
+   "box"
+  ],
+  "sha256": "cd6d7a772529fe1d15685a51e61511eaa0b39df403bbb7c54cd882796eaa788a",
+  "size": 640
+ }
+}
