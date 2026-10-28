@@ -115,8 +115,10 @@ def evaluate(cfg: dict, rows: list[dict], samp: list[dict], drops: int | None = 
 
     c = CRITERIA
     checks = [
-        ("Lost frames after the first minute", None if lost_frac is None else lost_frac <= c["max_lost_frac"],
-         f"{lost} of {sent} = {100 * (lost_frac or 0):.2f}% (limit {100 * c['max_lost_frac']:.0f}%)"
+        ("Lost frames after the first minute",
+         (False if steady else None) if lost_frac is None else lost_frac <= c["max_lost_frac"],
+         ("no frames arrived at all" if steady and not sent else
+          f"{lost} of {sent} = {100 * (lost_frac or 0):.2f}% (limit {100 * c['max_lost_frac']:.0f}%)")
          + (f"; the RTSP server discarded data {drops} times because the device's connection stalled "
             f"(network, not decoding)" if drops else "")),
         ("Worst thermal status", None if worst is None else worst <= c["max_thermal_status"],
@@ -139,7 +141,8 @@ def evaluate(cfg: dict, rows: list[dict], samp: list[dict], drops: int | None = 
         "latency_p95_ms_median": sorted(lats)[len(lats) // 2] if lats else None,
         "battery_temp_max_c": max([r["battery_temp_c"] for r in rows if r.get("battery_temp_c") is not None], default=None),
         "zone_temp_max_c": max([b["zone_max_c"] for b in samp if b.get("zone_max_c") is not None], default=None),
-        "min_headroom": min([r["thermal_headroom"] for r in rows if r.get("thermal_headroom") is not None], default=None),
+        "max_thermal_headroom": max([r["thermal_headroom"] for r in rows if r.get("thermal_headroom") is not None],
+                                    default=None),  # 0 = cool, 1 = the OS starts throttling
         "app_cpu_pct_avg": mean([r.get("app_cpu_pct") for r in rows]),
         "catch_ups": sum(s.get("catchups_total", 0) for s in rows[-1]["streams"]) if rows else None,
         "proc_ms_avg": mean([s.get("proc_ms") for r in rows for s in r["streams"]]),
@@ -223,7 +226,21 @@ def report(d: Path) -> int:
         lines += [f"Device: {dev['manufacturer']} {dev['model']}, SoC {dev.get('soc')}, Android {dev['release']}, "
                   f"RAM {dev['ram_mb']} MB", ""]
     lines += [f"Run: {facts['duration_min']:.1f} min, {facts['streams']} streams, source {cfg['source']}, "
-              f"power {', '.join(map(str, facts['plugged']))}", "", "| Check | Result | Detail |", "|---|---|---|"]
+              f"power {', '.join(map(str, facts['plugged']))}", ""]
+    if (d / "done.json").exists():
+        done = json.loads((d / "done.json").read_text())
+        if done.get("reason") != "duration reached":
+            lines += [f"Ended early: {done.get('reason')}.", ""]
+    else:
+        last = rows[-1]
+        lines += [f"**Did not finish:** the app's log stops at {last['elapsed_s'] / 60:.0f} of {cfg.get('minutes')} min "
+                  f"(battery {last.get('battery_level')}%, power {last.get('plugged')}). "
+                  + ("The battery ran flat." if (last.get("battery_level") or 100) <= 2 and last.get("plugged") == "none"
+                     else "The app was stopped or killed, or the run is still going (collect again later)."), ""]
+    if samp and rows[-1]["t_ms"] / 1000 - samp[-1]["t"] > 600:
+        lines += [f"The adb sampler (system CPU, thermal zones) stopped after "
+                  f"{(samp[-1]['t'] - samp[0]['t']) / 3600:.1f} h; its averages cover only that part.", ""]
+    lines += ["| Check | Result | Detail |", "|---|---|---|"]
     for name, ok, detail in checks:
         lines.append(f"| {name} | {'PASS' if ok else 'FAIL' if ok is False else 'n/a'} | {detail} |")
     lines += ["", "| Measure | Value |", "|---|---|"]
