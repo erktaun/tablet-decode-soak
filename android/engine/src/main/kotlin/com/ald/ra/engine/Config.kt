@@ -31,8 +31,10 @@ data class Camera(
     val fps: Double = 5.0,
     /** Polygons the detector should ignore (e.g. a menu board with a food photo). */
     val ignore: List<List<List<Double>>> = emptyList(),
-    /** Shared map: 4+ image points and the same points on the floor plan (metres), spec §4.3. */
+    /** Shared map, counter surface: 4+ image points on the counter and the same points on the floor plan (metres). */
     val map: MapPoints? = null,
+    /** Optional shared map for the floor (people's feet). Without it people are matched in the image only. */
+    val floor: MapPoints? = null,
 )
 
 @Serializable
@@ -91,11 +93,17 @@ data class Params(
     // assembly: bases kept by position
     val baseIou: Double = 0.3,
     val baseMinS: Double = 2.0,
-    val baseGoneS: Double = 6.0,
-    val baseMoveGapS: Double = 15.0,
+    val baseGoneS: Double = 10.0,
+    /** A base reappearing where a finished, not yet packed dish was, within this time, resumes that dish. */
+    val baseResumeS: Double = 30.0,
     // ingredient checks
     val checkEveryS: Double = 3.0,
+    /**
+     * Check only when the detection is confident (hands not covering): conf >= min(checkMinConf, checkRelConf x the
+     * base's best so far). Relative, because confidence depends on resolution and site. checkRelConf = 0: absolute only.
+     */
     val checkMinConf: Double = 0.8,
+    val checkRelConf: Double = 0.5,
     /** The base must not have moved for this long before a check (0 = off). */
     val checkStillS: Double = 1.0,
     val checkStillShift: Double = 0.05,
@@ -114,6 +122,19 @@ data class Params(
     val customerGoneS: Double = 6.0,
     // transit
     val defaultTravelMaxS: Double = 600.0,
+    // custody (spec §4.2)
+    /** A lost box that reappears here (IoU, or centre distance in box sizes) is the same box ("parked"). */
+    val parkIou: Double = 0.3,
+    val parkDist: Double = 0.5,
+    /** A put-down box must be within the carrier's box grown by this fraction. */
+    val carryGrow: Double = 0.25,
+    /** A unit missing from the checkout zone this long, with a customer around, was handed over. */
+    val handoverS: Double = 3.0,
+    /** Shared map: boxes seen by two cameras within this distance (metres) and time (s) are the same box. */
+    val mapTolM: Double = 0.5,
+    val mapTolS: Double = 1.0,
+    /** Track history kept for matching a box to where a unit was when it went missing. */
+    val historyS: Double = 10.0,
 )
 
 @Serializable

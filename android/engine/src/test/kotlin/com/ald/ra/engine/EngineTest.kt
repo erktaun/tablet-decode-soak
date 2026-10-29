@@ -34,6 +34,9 @@ class ByteTrackTest {
 
 /** The pizza clip replayed on Python's recorded detections and Decisions answers must give the Python results. */
 class PizzaParityTest {
+    /** Python's check gate and timings, so the recorded answers line up with the checks the engine asks for. */
+    private val PYTHON_PARAMS = """{"checkEveryS":10,"checkStillS":0,"checkRelConf":0,"baseGoneS":6}"""
+
     private val repo = File("../..").absoluteFile.normalize()  // tablet-soak/ (tests run in android/engine)
     private val res = File("src/test/resources/pizza_trailer")
 
@@ -42,7 +45,7 @@ class PizzaParityTest {
         val out = File(repo, "out/test_parity")
         main(arrayOf("--site", File(repo, "sites/pizza_trailer").path, "--detections", File(res, "detections.json").path,
             "--checker", "recorded:${File(res, "decision_calls.jsonl").path}", "--out", out.path,
-            "--params", """{"checkEveryS":10,"checkStillS":0}"""))
+            "--params", PYTHON_PARAMS))
         val ev = File(out, "events.jsonl").readLines()
         fun has(kind: String, t: Double, vararg parts: String) = assertTrue(
             ev.any { l -> "\"kind\":\"$kind\"" in l && parts.all { it in l } &&

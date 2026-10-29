@@ -11,6 +11,8 @@ class Frame(
     val dets: List<Det>,
     val occ: Map<String, Double> = emptyMap(),
     val crop: ((box: Box, mask: List<Box>) -> ByteArray?)? = null,
+    /** Codes (QR / order labels) read in this frame, with where they were read. */
+    val codes: List<Pair<Box, String>> = emptyList(),
 )
 
 /** Runs ingredient checks. The replay runs them inline; the app runs them on a worker thread. */
@@ -36,11 +38,30 @@ class OrderUnit(
     var packedT: Double? = null
     var atCheckout = false
     var handedOver = false
+    // custody (spec §4.2)
+    var state = UState.PENDING
+    var camera: String? = null
+    var lastBox: Box? = null
+    var lastSeenT = 0.0
+    var lostT: Double? = null
+    var coveredBy: Int? = null
+    var carrier: Int? = null
+    var transitT: Double? = null
+    var mapPos: Pair<Double, Double>? = null
+    var mapT = 0.0
+    /** Order ids this unit might belong to, when custody isn't sure; empty = certain. */
+    var candidates: List<String> = emptyList()
+    val tracks = mutableMapOf<String, Int>()
+
+    /** Custody starts: the unit was last seen at `box` in `camera` (packing, or a finished base in in_container mode). */
+    fun pending(camera: String, box: Box, t: Double) {
+        state = UState.PENDING; this.camera = camera; lastBox = box; lostT = t; lastSeenT = t
+    }
 }
 
 /**
  * The restaurant-analytics engine: feed it frames (any camera, in time order); it emits events.
- * Stations are built from the site's zones and roles (docs/kotlin-port/spec.md §3–5).
+ * Stations are built from the site's zones and roles (docs/analytics/spec.md §3–5).
  */
 class Engine(
     val site: Site,
@@ -62,6 +83,10 @@ class Engine(
     private val checkout = site.zones.filter { it.role == Role.CHECKOUT }.map { z ->
         CheckoutStation(this, z, site.zones.firstOrNull { it.role == Role.CUSTOMER && (it.forZone == z.name || it.forZone == null) })
     }
+    val custody = Custody(this)
+
+    fun customerNear(checkoutZone: String, t: Double) = checkout.firstOrNull { it.zone.name == checkoutZone }?.customerNear(t) == true
+    fun hasCustomerZone(checkoutZone: String) = checkout.firstOrNull { it.zone.name == checkoutZone }?.hasCustomerZone == true
 
     private class Ready(val readyT: Double, val apply: () -> Unit)
     private val ready = mutableListOf<Ready>()
@@ -80,10 +105,11 @@ class Engine(
         applyReady(f.t)
         val ign = ignores[f.camera].orEmpty()
         val dets = if (ign.isEmpty()) f.dets else f.dets.filter { d -> ign.none { it.contains(d.box) } }
-        val ff = Frame(f.camera, f.t, dets, f.occ, f.crop)
+        val ff = Frame(f.camera, f.t, dets, f.occ, f.crop, f.codes)
         for (s in assembly) if (s.zone.camera == f.camera) s.onFrame(ff)
         for (s in packing) if (s.zone.camera == f.camera) s.onFrame(ff)
         for (s in checkout) if (s.zone.camera == f.camera) s.onFrame(ff)
+        if (custody.active()) custody.onFrame(ff)
     }
 
     /** Schedule a check result to be applied once the stream reaches the time a live system would have it. */
@@ -134,7 +160,8 @@ class Engine(
         val fixed = units.filter { it.packedT != null && it.orderId != null }.map { it.orderId to it.item }.toSet()
         val slots = orders.flatMapIndexed { oi, o -> o.items.indices.map { i -> Triple(oi, o, i) } }
             .filter { (_, o, i) -> (o.id to i) !in fixed }
-        val free = units.filter { it.packedT == null && !it.handedOver }
+        // Dishes with no confirmed ingredient are no evidence for any order (often a detection fragment): left out.
+        val free = units.filter { it.packedT == null && !it.handedOver && it.contents.isNotEmpty() }
         val score = { u: OrderUnit, s: Triple<Int, Order, Int> ->
             val exp = expected(s.second.items[s.third]).toSet(); val f = u.contents.toSet()
             (exp intersect f).size - (f - exp).size
@@ -158,6 +185,9 @@ class Engine(
         }
         if (free.size <= 6 && slots.size <= 12) rec(0, BooleanArray(slots.size), IntArray(free.size), 0, 0)
         else best = free.map { u -> slots.indices.maxByOrNull { score(u, slots[it]) } ?: -1 }  // too big: greedy
+        if (newUnit.contents.isEmpty()) log.add(t, "dish_verdict", known, "dish" to newUnit.id, "order" to null, "recipe" to null,
+            "found" to emptyList<String>(), "missing" to emptyList<String>(), "extra" to emptyList<String>(),
+            "note" to "no ingredient confirmed; not matched to an order")
         for ((k, u) in free.withIndex()) {
             val j = best!![k]
             val s = slots.getOrNull(j)
@@ -195,6 +225,7 @@ class AssemblyStation(private val e: Engine, val zone: Zone) {
         var anchor = box
         var stillSince = first
         var nextCheck = 0.0
+        var bestConf = 0.0
         var inFlight = 0
         var done = false
         val streak = mutableMapOf<String, Int>()
@@ -232,6 +263,19 @@ class AssemblyStation(private val e: Engine, val zone: Zone) {
 
     /** A base seen long enough: either the continuation of a base that moved along the line, or a new dish. */
     private fun start(b: Base, t: Double) {
+        // A finished dish that reappears at the same spot, before it was packed or moved on: the detector lost it for a
+        // while (bare dough is hard to see). Resume it and withdraw its verdict.
+        val back = bases.filter { o -> o.id != null && o.done && b.first - o.last <= p.baseResumeS && near(o.box, b.box) &&
+            e.units.firstOrNull { it.id == o.id }?.let { it.packedT == null && it.zone == zone.name && !it.atCheckout } == true }
+            .maxByOrNull { it.last }
+        if (back != null) {
+            back.done = false; back.box = b.box; back.last = b.last; back.anchor = b.anchor; back.stillSince = b.stillSince
+            back.bestConf = maxOf(back.bestConf, b.bestConf)
+            bases.remove(b)
+            e.units.removeAll { it.id == back.id }
+            e.log.add(b.first, "dish_resumed", t, "dish" to back.id, "zone" to zone.name, "note" to "verdict withdrawn")
+            return
+        }
         val (nx, ny) = nextZoneCentroid()
         val dist = { x: Box -> kotlin.math.hypot(x.cx - nx, x.cy - ny) }
         val prev = bases.filter { it.id != null && !it.done && it !== b && it.last < b.first && dist(b.box) < dist(it.box) }
@@ -246,6 +290,8 @@ class AssemblyStation(private val e: Engine, val zone: Zone) {
         e.log.add(b.first, "dish_started", t, "dish" to b.id, "zone" to zone.name)
     }
 
+    private fun near(a: Box, c: Box) = iou(a, c) >= p.baseIou || kotlin.math.hypot(a.cx - c.cx, a.cy - c.cy) <= 0.5 * maxOf(a.size, c.size)
+
     private fun nextZoneCentroid(): Pair<Double, Double> {
         val cam = e.site.cameras.first { it.name == zone.camera }
         val i = e.flowIndex(zone.name)
@@ -255,7 +301,9 @@ class AssemblyStation(private val e: Engine, val zone: Zone) {
     }
 
     private fun maybeCheck(b: Base, d: Det, f: Frame, allBases: List<Box>) {
-        if (b.id == null || b.done || f.t < b.nextCheck || d.conf < p.checkMinConf) return
+        b.bestConf = maxOf(b.bestConf, d.conf)
+        val gate = if (p.checkRelConf > 0) minOf(p.checkMinConf, p.checkRelConf * b.bestConf) else p.checkMinConf
+        if (b.id == null || b.done || f.t < b.nextCheck || d.conf < gate) return
         if (p.checkStillS > 0 && f.t - b.stillSince < p.checkStillS) return
         b.nextCheck = f.t + p.checkEveryS
         val jpeg = f.crop?.invoke(d.box, allBases.filter { it != d.box })
@@ -283,6 +331,7 @@ class AssemblyStation(private val e: Engine, val zone: Zone) {
         val known = maxOf(t, b.confirmed.values.maxOrNull() ?: 0.0)
         e.log.add(b.last, "dish_done", known, "dish" to b.id, "zone" to zone.name, "moved_at" to b.links)
         val u = OrderUnit(b.id!!, b.confirmed.keys.sorted(), zone.name, b.last)
+        if (e.site.assembly.mode == "in_container") u.pending(zone.camera, b.box, b.last)
         e.units += u
         e.assignOrders(u, b.last, known)
     }
@@ -300,7 +349,7 @@ class PackingStation(private val e: Engine, val zone: Zone) {
     private val p = e.p
     private val poly = e.polys[zone.name]!!
 
-    private inner class Ep(val start: Double, var last: Double) { var unit: OrderUnit? = null }
+    private inner class Ep(val start: Double, var last: Double) { var unit: OrderUnit? = null; var box: Box? = null }
     private var ep: Ep? = null
 
     fun onFrame(f: Frame) {
@@ -316,6 +365,7 @@ class PackingStation(private val e: Engine, val zone: Zone) {
         if (flag) {
             val c = ep ?: Ep(f.t, f.t).also { ep = it }
             c.last = f.t
+            c.box = inZone.maxByOrNull { it.conf }?.box ?: c.box
             if (c.unit == null && c.last - c.start >= p.packMinS) {
                 val u = e.pendingFor(zone.name, c.start) { it.packedT == null && it.zone != zone.name }.firstOrNull()
                 if (u == null) e.log.add(c.start, "packing_unmatched", f.t, "zone" to zone.name,
@@ -332,6 +382,7 @@ class PackingStation(private val e: Engine, val zone: Zone) {
     private fun close(c: Ep, t: Double) {
         val u = c.unit ?: return
         u.packedT = c.last; u.leftT = c.last
+        if (e.custody.active()) c.box?.let { u.pending(zone.camera, it, c.last) }
         e.log.add(c.last, "unit_packed", t, "unit" to u.id, "order" to u.orderId, "zone" to zone.name)
     }
 
@@ -415,6 +466,9 @@ class CheckoutStation(private val e: Engine, val zone: Zone, private val custome
             }
         }
     }
+
+    val hasCustomerZone get() = customer != null
+    fun customerNear(t: Double) = custT.any { kotlin.math.abs(it - t) <= p.customerWindowS }
 
     fun finish(t: Double) {
         run?.let { drops += ts[it.first] }; run = null

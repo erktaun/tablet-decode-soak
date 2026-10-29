@@ -68,6 +68,22 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
   - Spec defaults with the live API (check every 3 s, base still 1 s): all events correct, and confirmations come earlier (ham at 126 s vs 135 s). 104 checks, p50 0.42 s, $0.014/order.
   - Run (from `android/`): `JAVA_HOME=~/Documents/libs/android-studio/jbr ./gradlew :engine:installDist && engine/build/install/engine/bin/engine --site ../sites/pizza_trailer --detections engine/src/test/resources/pizza_trailer/detections.json --checker live --env ../../.env --video <cam_full.mp4> --out ../out/pizza_live`
 
+- **Day 2, in progress (2026-10-29).**
+  - **Model export verified.** YOLOE with the pizza clip's visual-prompt classes exports to TFLite (`tools/make_site_model.py`, 40.6 MB) and reproduces 100% of PyTorch's boxes on 20 frames (open box 56/56, pizza 37/37, person 31/31).
+  - **Order matching over every pairing.** `dish_reassigned` when a later dish fixes an earlier tie. Two unit tests.
+  - **Custody written** (`Custody.kt`: parked, carried, transit, shared map, QR override, checkout hand-over). **Scenario tests not written yet**, so it is unproven.
+  - **640 px finding.** The tablet runs the detector at 640; the Python demo ran at 1280. On this wide clip (pizza about 80 px) a full-frame 640 input breaks the make line and loses the customer. Two changes:
+    - The detector runs on a **region of interest = the union of the camera's zones** (app default, to build on day 3; tested in Python with `roi` in the scene config).
+    - Rules that don't depend on resolution:
+      - a dish reappearing at the same spot within 30 s resumes (`dish_resumed`, verdict withdrawn);
+      - empty dishes don't take an order slot;
+      - the check gate is relative to the dish's best confidence (0.5×);
+      - "dish finished" after 10 s unseen instead of 6.
+  - **Results with the defaults and live API:**
+    - 1280 full frame: all correct, 108 checks, $0.014.
+    - 640 + region of interest: packing, hand-over and both recipes correct, but one **false "extra salami"** on the ham pizza (3 checks in a row at 112–120 s while ham was being laid on an 80 px pizza) and one early verdict withdrawn.
+    - This clip is outside the spec's camera guidance (dish ≥ 250 px), so expect this kind of error at 640 when the dish is small. Fixes: place the camera closer, or use a bigger model input (960/1280, 2.25–4× the compute).
+
 ## Risks
 - **Closed-box detection on the client's boxes** (the pizza clip never detected them). We only find out from recording R1.
 - **Redmi detector speed:** Exp 2 hasn't been run. The plan assumes about 30 inferences/s at 640.
