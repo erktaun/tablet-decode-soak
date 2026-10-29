@@ -17,6 +17,7 @@ What the demo shows:
 | 2–3 IP cameras (RTSP), mounts, PoE switch, our router | cameras on our own network; the client's Wi-Fi is not enough |
 | Laptop with this repo and the model-build setup (below) | needed on site, once, to build the detector after the references are drawn |
 | USB-C cable, tablet to laptop | for the model build and for collecting logs |
+| **An OpenAI API key** with a spending cap (set the cap in the OpenAI dashboard) | the ingredient checks call OpenAI. It goes **only on the tablet** (tablet setup, step 4), not on the laptop or in any file. About $0.014 per order; the 24 h test with a looping clip about $3 a day |
 | Internet for the tablet | the ingredient checks call the Decisions API; bring a 4G hotspot as a backup |
 | Printed QR labels with the order ids, about 8–10 cm wide | only if boxes may be swapped where no camera sees them (spec §4.4) |
 
@@ -33,7 +34,11 @@ Also install `adb` (Android platform-tools) and `ffmpeg`.
 1. Settings → About → tap "OS version" 7 times → Developer options → turn on **USB debugging**. On Xiaomi, also turn on **USB debugging (Security settings)**.
 2. Install the APK: download `analytics-v0.4.apk` from the repo's releases, then `adb install -r analytics-v0.4.apk`.
 3. App settings → Battery saver → **No restrictions**. Without this, HyperOS freezes the app in the background and the run is invalid. The app shows "PAUSED BY THE SYSTEM" when that happens.
-4. API key: main screen → **API key** → paste. It is kept in the app's private storage, never in logs or reports. The status line shows "API key set". Use a key with a spending cap. A demo costs about $0.014 per order.
+4. **OpenAI API key:** open the app → main screen → **API key** (top row) → paste the key (`sk-…`) → **Save**.
+   - It is kept in the app's private storage, never in logs, reports or the site pack.
+   - When no run is active, the status line at the top shows "API key set"; it is used from the next **Start**.
+   - Without a key the app still detects and tracks, but the ingredient checks are off ("API key NOT SET (checks off)"), so dish verdicts mean nothing.
+   - To replace the key, paste a new one; **Remove** deletes it.
 5. **Rehearsal at home:** `python3 tools/check_device.py --site pizza_trailer --no-build` (with the APK in `android/analytics/build/outputs/apk/debug/analytics-debug.apk`, or add `--no-install` after installing it yourself). It plays the pizza clip on the tablet, about 8 minutes, and must end with `ALL PASS`. The `detector: ... ms` line is the tablet's speed (under about 100 ms is fine). Please send us that output: it is the first Redmi measurement.
 
 ---
