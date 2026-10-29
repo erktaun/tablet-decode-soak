@@ -1,0 +1,173 @@
+{
+  "site": "pizza_qr",
+  "cameras": [
+    {
+      "name": "cam0",
+      "url": "file:pizza_qr.mp4",
+      "width": 1280,
+      "height": 720,
+      "fps": 5,
+      "ignore": [
+        [
+          [
+            1090,
+            270
+          ],
+          [
+            1280,
+            270
+          ],
+          [
+            1280,
+            420
+          ],
+          [
+            1090,
+            420
+          ]
+        ]
+      ]
+    }
+  ],
+  "zones": [
+    {
+      "name": "make_line",
+      "camera": "cam0",
+      "role": "assembly",
+      "poly": [
+        [
+          340,
+          330
+        ],
+        [
+          560,
+          330
+        ],
+        [
+          545,
+          600
+        ],
+        [
+          300,
+          600
+        ]
+      ]
+    },
+    {
+      "name": "oven",
+      "camera": "cam0",
+      "role": "hold",
+      "poly": [
+        [
+          490,
+          230
+        ],
+        [
+          620,
+          230
+        ],
+        [
+          620,
+          330
+        ],
+        [
+          490,
+          330
+        ]
+      ]
+    },
+    {
+      "name": "boxing",
+      "camera": "cam0",
+      "role": "packing",
+      "poly": [
+        [
+          690,
+          320
+        ],
+        [
+          800,
+          320
+        ],
+        [
+          800,
+          480
+        ],
+        [
+          690,
+          480
+        ]
+      ]
+    },
+    {
+      "name": "pass",
+      "camera": "cam0",
+      "role": "checkout",
+      "poly": [
+        [
+          790,
+          370
+        ],
+        [
+          860,
+          370
+        ],
+        [
+          860,
+          450
+        ],
+        [
+          790,
+          450
+        ]
+      ]
+    },
+    {
+      "name": "customer",
+      "camera": "cam0",
+      "role": "customer",
+      "poly": [
+        [
+          940,
+          340
+        ],
+        [
+          1100,
+          340
+        ],
+        [
+          1100,
+          480
+        ],
+        [
+          940,
+          480
+        ]
+      ],
+      "for": "pass"
+    }
+  ],
+  "flow": [
+    "make_line",
+    "oven",
+    "boxing",
+    "pass"
+  ],
+  "classes": {
+    "base": [
+      "pizza"
+    ],
+    "open_container": [
+      "open box"
+    ],
+    "closed_container": [],
+    "person": [
+      "person"
+    ]
+  },
+  "assembly": {
+    "mode": "packed_after",
+    "done": "leaves_zone"
+  },
+  "note": "The pizza_trailer clip with a 56 px QR code \"A-2041\" pasted on the closed box at the pass (362-373 s), made with ffmpeg overlay (plan.md, day 4): tests QR reading at checkout (spec 4.4)."
+}

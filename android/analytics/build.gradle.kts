@@ -36,6 +36,7 @@ dependencies {
     val media3 = "1.4.1"
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")  // order codes at checkout; model bundled, works offline
     val litert = "1.4.2"
     implementation("com.google.ai.edge.litert:litert:$litert")
     implementation("com.google.ai.edge.litert:litert-gpu:$litert")

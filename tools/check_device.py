@@ -130,19 +130,28 @@ def main():
             sys.exit(f"could not store the key: {r.stderr.strip()}")
         log("API key stored in the app's private files")
 
-    run_id = time.strftime("%Y%m%d-%H%M%S") + "-check-" + a.site
-    extras = {"mode": "start", "site": a.site, "run_id": run_id, "speed": str(a.speed)}
-    if a.params:
-        extras["params"] = a.params
-    if a.save_dets:
+    sys.exit(run_check(adb, a.site, site / "expect.json", a.speed, a.params, a.save_dets,
+                       60 * (a.timeout or (video_seconds(site) / a.speed / 60 + 3))))
+
+
+def run_check(adb: Adb, site_name: str, expect: Path, speed=1.0, params=None, save_dets=False, limit=600.0,
+              after_start=None) -> int:
+    """Start a run of a site already on the device, wait for it, pull it and check it. Returns the exit code.
+    `after_start(run_id)` runs once the run has started (e.g. typing orders on the screen)."""
+    run_id = time.strftime("%Y%m%d-%H%M%S") + "-check-" + site_name
+    extras = {"mode": "start", "site": site_name, "run_id": run_id, "speed": str(speed)}
+    if params:
+        extras["params"] = params
+    if save_dets:
         extras["save_dets"] = "true"
     args = ["shell", "am", "start", "-n", ACT]
     for k, v in extras.items():
         args += ["--es", k, f"'{v}'" if k == "params" else v]
     adb.run(*args)
     run_dir = f"{FILES}/runs/{run_id}"
-    limit = 60 * (a.timeout or (video_seconds(site) / a.speed / 60 + 3))
     log(f"run {run_id} started; waiting up to {limit / 60:.0f} min")
+    if after_start:
+        after_start(run_id)
     t0, last = time.time(), ""
     while time.time() - t0 < limit:
         if adb.exists(f"{run_dir}/done.json"):
@@ -179,10 +188,9 @@ def main():
     errs = [l for l in (local / "log.txt").read_text().splitlines() if "error" in l.lower() or "FAILED" in l or " paused " in l] if (local / "log.txt").exists() else []
     for e in errs[:10]:
         log(f"  log: {e}")
-    expect = site / "expect.json"
     if not expect.exists():
-        log("no expect.json for this site: nothing to check")
-        return
+        log(f"no {expect}: nothing to check")
+        return 0
     res = check(events, json.loads(expect.read_text()))
     if ms:
         p = ms[-1].get("pauses", 0)
@@ -192,7 +200,7 @@ def main():
         print(("PASS  " if ok else "FAIL  ") + msg)
     n_bad = sum(not ok for ok, _ in res)
     print(f"\n{'ALL PASS' if n_bad == 0 else f'{n_bad} FAILED'} ({len(res)} checks) — {local}")
-    sys.exit(1 if n_bad else 0)
+    return 1 if n_bad else 0
 
 
 if __name__ == "__main__":

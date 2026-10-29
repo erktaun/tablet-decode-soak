@@ -79,6 +79,8 @@ class Engine(
     private val ignores = site.cameras.associate { c -> c.name to c.ignore.map { Poly(it) } }
 
     val units = mutableListOf<OrderUnit>()
+    /** Last time each code was read per camera: `code_read` is logged when a code shows up, not on every frame. */
+    private val codeSeen = mutableMapOf<Pair<String, String>, Double>()
 
     private val assembly = site.zones.filter { it.role == Role.ASSEMBLY }.map { AssemblyStation(this, it) }
     private val packing = site.zones.filter { it.role == Role.PACKING }.map { PackingStation(this, it) }
@@ -112,6 +114,12 @@ class Engine(
         val ign = ignores[f.camera].orEmpty()
         val dets = if (ign.isEmpty()) f.dets else f.dets.filter { d -> ign.none { it.contains(d.box) } }
         val ff = Frame(f.camera, f.t, dets, f.occ, f.crop, f.codes)
+        for ((b, code) in f.codes) {
+            val last = codeSeen.put(f.camera to code, f.t)
+            if (last == null || f.t - last > 10.0) log.add(f.t, "code_read", f.t, "code" to code, "camera" to f.camera,
+                "zone" to site.zones.firstOrNull { it.camera == f.camera && polys[it.name]!!.contains(b.cx, b.cy) }?.name,
+                "known" to orders.any { it.id == code })
+        }
         for (s in assembly) if (s.zone.camera == f.camera) s.onFrame(ff)
         for (s in packing) if (s.zone.camera == f.camera) s.onFrame(ff)
         for (s in checkout) if (s.zone.camera == f.camera) s.onFrame(ff)
@@ -421,7 +429,8 @@ class PackingStation(private val e: Engine, val zone: Zone) {
 /**
  * Checkout (spec §5). With closed containers detected, units are followed into the zone (custody, day 2).
  * Fallback (no closed-container class): the zone's occupancy drops while a customer is present, and an order whose
- * units are all packed is handed over, oldest first. Events from the fallback are marked `inferred`.
+ * units are all packed is handed over, oldest first, unless a code (QR / order label) read in the zone just before
+ * names the order. Events from the fallback are marked `inferred`, and `by` says how the order was chosen.
  */
 class CheckoutStation(private val e: Engine, val zone: Zone, private val customer: Zone?) {
     private val p = e.p
@@ -434,10 +443,13 @@ class CheckoutStation(private val e: Engine, val zone: Zone, private val custome
     private var custEp: Pair<Double, Double>? = null
     private var custAnnounced = false
     private val drops = mutableListOf<Double>()
+    private val codes = mutableMapOf<String, Double>()  // code read in this zone -> last time
 
     fun onFrame(f: Frame) {
         customerFrame(f)
         if (e.site.classes.closedContainer.isNotEmpty()) return  // tracked path: day 2
+        val poly = e.polys[zone.name]!!
+        for ((b, code) in f.codes) if (poly.contains(b.cx, b.cy)) codes[code] = f.t
         val o = f.occ[zone.name] ?: return
         ts += f.t; occ += o
         val i = occ.size - w  // centre of the window that just completed
@@ -479,14 +491,18 @@ class CheckoutStation(private val e: Engine, val zone: Zone, private val custome
             val near = custT.any { kotlin.math.abs(it - td) <= p.customerWindowS }
             if (!near && t < td + p.customerWindowS) continue  // a customer may still turn up
             it.remove()
-            val order = e.orders.firstOrNull { o ->
+            // A code read on the box in the zone shortly before it left names the order.
+            val coded = codes.filter { (_, tc) -> tc >= td - p.customerWindowS && tc <= td + 1.0 }.entries.sortedByDescending { it.value }.map { it.key }
+            val byCode = coded.firstNotNullOfOrNull { c -> e.orders.firstOrNull { o -> o.id == c && e.units.any { u -> u.orderId == c && !u.handedOver } } }
+            val order = byCode ?: e.orders.firstOrNull { o ->
                 val us = e.units.filter { u -> u.orderId == o.id }
                 us.size == o.items.size && us.all { u -> !u.handedOver && (u.packedT ?: Double.MAX_VALUE) <= td }
             }
             if (near && order != null) {
-                val us = e.units.filter { u -> u.orderId == order.id }
+                val us = e.units.filter { u -> u.orderId == order.id && !u.handedOver }
                 us.forEach { u -> u.handedOver = true; u.zone = zone.name }
-                e.log.add(td, "handed_over", t, "order" to order.id, "units" to us.map { u -> u.id }, "zone" to zone.name, "inferred" to true)
+                e.log.add(td, "handed_over", t, "order" to order.id, "units" to us.map { u -> u.id }, "zone" to zone.name, "inferred" to true,
+                    "by" to if (byCode != null) "code" else "oldest packed")
             } else {
                 e.log.add(td, "checkout_changed", t, "zone" to zone.name, "note" to "something left the checkout" +
                     (if (near) "" else " (no customer)") + (if (order == null) " (no order fully packed yet)" else ""))

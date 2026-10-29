@@ -39,6 +39,8 @@ This is a live demo at a client site with our own cameras. Everything specific t
 
 Steps 1–5 happen on the tablet; step 6 is one laptop command. The result is the **site pack**: `site.json`, `menu.json`, `model.tflite` and the reference images.
 
+On the tablet: main screen → Site → **+ New site** → Setup, with one page per step: **Cameras** (URL, connect, freeze a still, save the background), **Zones** (tap corners, name, role), **Flow** (order, travel times, assembly mode), **Objects** (classes and reference rectangles), **Map** (optional counter points), **Check** (what's still missing, then Start). Every change is saved at once. `menu.json` is prepared on the laptop or copied from another site (Check). Orders are typed on the live screen (**New order**) or preloaded in `orders.json`.
+
 ### 1.1 Cameras
 
 | Input | Meaning | Example |
@@ -114,7 +116,7 @@ Steps 1–5 happen on the tablet; step 6 is one laptop command. The result is th
 | `closed_container` | a closed box, a bag or a lidded bowl | a name, plus 3–5 frames **from each camera that tracks it**, with a rectangle drawn |
 | `person` | staff, customer, courier | nothing; this class uses a text prompt only |
 
-- References are captured on the tablet: freeze a live frame and drag a rectangle.
+- References are captured on the tablet: freeze a live frame and drag a rectangle (Setup → Objects). Frames are saved at full stream resolution in `refs/`, the rectangles in `refs/refs.json`.
 - Several base or container types are allowed (e.g. a large and a small box). Types also help tell units apart.
 
 ### 1.4 Menu (`menu.json`)
@@ -138,7 +140,7 @@ Steps 1–5 happen on the tablet; step 6 is one laptop command. The result is th
 ### 1.7 Build the model (laptop, one command)
 
 ```
-adb pull <site pack> → python make_site_model.py <site pack> → adb push model.tflite
+python3 tools/site_model_device.py --site <site>    # pulls the setup, builds, pushes model.tflite + model.json back
 ```
 
 - The script computes YOLOE visual-prompt embeddings from the reference rectangles, adds the `person` text class, and exports TFLite at 640.
@@ -282,8 +284,10 @@ Each unit has exactly one state at a time:
 
 **Stated plainly: no tracker, map or AI model can recover a swap of identical boxes that no camera saw.** The information isn't in any frame. Those cases need a **visible identifier on the box**: a QR code or order label printed with the order id, or a reusable numbered tag. Without one, the app shows "uncertain: A-2041 or A-2042" and never guesses.
 
-**Identifier reading (optional, about 0.5 day)**
-- ML Kit barcode or text recognition runs on crops of `closed_container` detections, at least on the checkout camera.
+**Identifier reading (built, day 4)**
+- ML Kit barcode scanning (QR, Data Matrix, Code 128/39; model bundled, works offline) runs on the checkout cameras every 0.5 s, on its own thread: on crops of `closed_container` detections, or on the checkout zones when the site has no closed-container class. Regions are enlarged to at least 480 px before scanning.
+- Each code is logged once as it shows up (`code_read`: code, camera, zone, whether an order has that id).
+- Closed boxes tracked: the code binds the box track to that order (custody). Occupancy fallback: a code read in the checkout zone shortly before the drop names the order handed over (`by: code`; otherwise `by: oldest packed`).
 - A read code overrides every other rule.
 - If the label is printed with the order id, checkout identity no longer depends on tracking at all. Tracking then only answers *where* the order is.
 - Size: a QR code needs about 60 px across in the stream. Mount the checkout camera close to the boxes, use its 1080p main stream, or use larger codes.

@@ -162,3 +162,41 @@ class OrderMatchingTest {
         assertEquals(listOf("cooked ham"), d2.extra)
     }
 }
+
+class CheckoutCodeTest {
+    private val sq = listOf(listOf(0.0, 0.0), listOf(400.0, 0.0), listOf(400.0, 400.0), listOf(0.0, 400.0))
+    private val wait = listOf(listOf(600.0, 0.0), listOf(1000.0, 0.0), listOf(1000.0, 400.0), listOf(600.0, 400.0))
+
+    /** Two packed orders at a checkout without closed-box detection; a box leaves at 10 s with a customer waiting. */
+    private fun handOver(code: String?): Engine {
+        val e = Engine(Fixtures.site(Zone("pass", "cam0", Role.CHECKOUT, sq), Zone("door", "cam0", Role.CUSTOMER, wait, forZone = "pass")),
+            Fixtures.menu, listOf(Order("A-1", listOf(OrderItem("Margherita")), 0.0), Order("A-2", listOf(OrderItem("Margherita")), 1.0)), Fixtures.noChecks)
+        for ((i, o) in listOf("A-1", "A-2").withIndex())
+            e.units += OrderUnit(i + 1, listOf("tomato sauce", "mozzarella"), "boxing", 0.0).apply { orderId = o; item = 0; packedT = 0.0 }
+        var t = 0.0
+        while (t <= 20.0) {
+            val codes = if (code != null && t in 6.0..9.0) listOf(Box(150.0, 150.0, 210.0, 210.0) to code) else emptyList()
+            e.onFrame(Frame("cam0", t, listOf(Det("person", Box(700.0, 100.0, 800.0, 380.0), 0.9)), mapOf("pass" to if (t < 10.0) 0.5 else 0.0),
+                codes = codes))
+            t = Math.round((t + 0.2) * 10) / 10.0
+        }
+        e.finish(t)
+        return e
+    }
+
+    @Test
+    fun `a code read at checkout names the order handed over`() {
+        val e = handOver("A-2")
+        val h = e.log.events.single { it.kind == "handed_over" }
+        assertEquals("A-2", h.data["order"])
+        assertEquals("code", h.data["by"])
+        assertEquals(1, e.kinds().count { it == "code_read" }, "logged when the code shows up, not every frame")
+    }
+
+    @Test
+    fun `without a code the oldest packed order is handed over`() {
+        val h = handOver(null).log.events.single { it.kind == "handed_over" }
+        assertEquals("A-1", h.data["order"])
+        assertEquals("oldest packed", h.data["by"])
+    }
+}

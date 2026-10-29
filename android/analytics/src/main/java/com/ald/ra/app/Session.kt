@@ -23,9 +23,10 @@ import com.ald.ra.engine.Frame
 import com.ald.ra.engine.Params
 import com.ald.ra.engine.Role
 import com.ald.ra.engine.Site
+import com.ald.ra.engine.SitePack
+import com.ald.ra.engine.Order
 import com.ald.ra.engine.json
 import com.ald.ra.engine.loadMenu
-import com.ald.ra.engine.loadOrders
 import com.ald.ra.engine.loadSite
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -120,6 +121,7 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
     private var ended = 0
     private val lastPreview = mutableMapOf<String, Long>()
     private val dishes = linkedMapOf<Int, MutableMap<String, Any?>>()
+    private val codeReader: CodeReader?
 
     init {
         var s = loadSite(File(siteDir, "site.json"))
@@ -128,6 +130,7 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
             s = s.copy(params = json.decodeFromJsonElement(Params.serializer(), merged))
         }
         site = s
+        codeReader = CodeReader(site) { log(it) }.takeIf { it.cameras.isNotEmpty() }
         val info = json.parseToJsonElement(File(siteDir, "model.json").readText()).jsonObject
         val size = info["imgsz"]!!.jsonPrimitive.content.toInt()
         // Show the detector each camera at about the scale its reference boxes had when the prompts were made
@@ -193,7 +196,7 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
                 done(res)
             }
         }
-        engine = Engine(site, loadMenu(File(siteDir, "menu.json")), loadOrders(File(siteDir, "orders.json")), runner)
+        engine = Engine(site, loadMenu(File(siteDir, "menu.json")), SitePack(siteDir).orders(), runner)
         engine.log.listeners += { e ->
             eventsFile.appendText(e.toJson().toString() + "\n")
             track(e)
@@ -243,7 +246,9 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
                 val v = bm ?: viewBitmap(s).also { bm = it }
                 cropJpeg(v, c.viewScale, box, site.params.cropSide, site.params.cropPad, mask)
             }
-            engine.onFrame(Frame(c.name, s.t, s.dets, o, crop))
+            val codes = codeReader?.take(c.name).orEmpty()
+            codeReader?.offer(c, s.t, s.dets) { bm ?: viewBitmap(s).also { bm = it } }
+            engine.onFrame(Frame(c.name, s.t, s.dets, o, crop, codes))
             lastT = maxOf(lastT, s.t)
             if (cfg.saveDets) detsFile.appendText(Event.toEl(mapOf("cam" to c.name, "t" to s.t,
                 "dets" to s.dets.map { listOf(it.cls, it.conf) + it.box.toList() }, "occ" to o)).toString() + "\n")
@@ -285,12 +290,28 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
         onUpdate?.invoke()
     }
 
+    /** Recipes of the running site's menu, for the order entry dialog. */
+    val recipes: List<String> get() = if (::engine.isInitialized) engine.menu.recipes.map { it.name } else emptyList()
+    val orderIds: List<String> get() = if (::engine.isInitialized) engine.orders.map { it.id } else emptyList()
+
+    /** An order typed on the tablet: it comes in now (stream time) and is kept in the run's orders_entered.jsonl. */
+    fun addOrder(o: Order) = engineH.post {
+        if (!::engine.isInitialized) return@post
+        val oo = o.copy(t = lastT)
+        engine.orders += oo
+        File(dir, "orders_entered.jsonl").appendText(json.encodeToString(Order.serializer(), oo) + "\n")
+        engine.log.add(lastT, "order_entered", lastT, "order" to oo.id, "items" to oo.items.map { i -> (listOf(i.recipe) + i.modifiers).joinToString(" ") })
+        orderText = orders()
+        onUpdate?.invoke()
+    }
+
     fun stop() {
         streams.forEach { it.stop() }
         if (::engine.isInitialized) engineH.post { finish("stopped") }
         engineH.post {
             metricsH.removeCallbacksAndMessages(null)
             detH.post { detector?.close(); detector = null }
+            codeReader?.close()
         }
     }
 
@@ -324,13 +345,14 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
             "cams" to cams.associate { it.name to mapOf("shots" to it.shots.get(), "dropped" to it.dropped.get()) },
             "streams" to streams.associate { it.url to mapOf("frames" to it.frames.get(), "state" to it.state, "decoder" to it.decoder,
                 "errors" to it.errors.get(), "last_error" to it.lastError) },
+            "code_scans" to (codeReader?.scans?.get() ?: 0), "codes_read" to (codeReader?.reads?.get() ?: 0),
             "checks" to nChecks.get(), "check_errors" to checkErrors.get(), "pauses" to pauses, "paused_s" to Math.round(pausedS * 10) / 10.0, "check_p50_s" to p(lat, 0.5), "cost_usd" to costUsd, "thermal" to pm.currentThermalStatus,
         )
         metricsFile.appendText(Event.toEl(m).toString() + "\n")
         statusText = "%s · %s · t %.1f s · detector %s ms (p50, %d in 5 s) · checks %d (%s s, \$%.4f) · thermal %d".format(
             state, backend, lastT, p(inf, 0.5) ?: "-", inf.size, nChecks.get(), p(lat, 0.5) ?: "-", costUsd, pm.currentThermalStatus) +
             "\n" + cams.joinToString("  ") { "${it.name}: ${it.shots.get()} shots, ${it.dropped.get()} dropped" } +
-            "  ·  checker: $checker" +
+            "  ·  checker: $checker" + (codeReader?.let { r -> "  ·  codes read ${r.reads.get()}${r.last?.let { " (last $it)" } ?: ""}" } ?: "") +
             (lastCheckError?.let { "\nCHECKS FAILING (${checkErrors.get()}): $it" } ?: "") +
             (if (pauses > 0) "\nPAUSED BY THE SYSTEM %d× (%.0f s): set Battery saver to No restrictions".format(pauses, pausedS) else "")
         onUpdate?.invoke()

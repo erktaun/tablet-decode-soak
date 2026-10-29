@@ -9,6 +9,7 @@
 
     <application
         android:label="Restaurant Analytics"
+        android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar"
         android:icon="@android:drawable/ic_menu_view"
         android:usesCleartextTraffic="true">
 
@@ -27,6 +28,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".SetupActivity"
+            android:exported="true"
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
 
         <service
             android:name=".AnalyticsService"

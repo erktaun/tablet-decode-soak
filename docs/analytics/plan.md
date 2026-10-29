@@ -112,6 +112,18 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
   - **Final phone runs with all fixes: ALL PASS on both sites** (8 checks each, including "never paused"). One camera: 2150 frames, 0 dropped, detector 44 ms p50, 98 checks $0.013. Two cameras: 4300 frames, 0 dropped, 43 ms p50, 98 checks $0.013. No thermal throttling.
   - Still to do on day 3: Android painter for the referee (optional, it is off by default).
 
+- **Day 4 (2026-10-29).**
+  - **Setup screens** (`SetupActivity`; main screen: Site → + New site → Setup): Cameras (URL or `file:` recording, connect, freeze a still at stream resolution, save the background; seek buttons for recordings), Zones (tap corners or whole view; name + role; `ignore` areas), Flow (order, travel times between cameras, assembly mode and done signal), Objects (classes with roles; freeze frames and drag rectangles), Map (optional counter points with plan coordinates), Check (errors and warnings, copy a menu from another site, Start). Every change is saved to the site pack at once.
+  - **Site check** in the engine (`SitePack.kt`, `checkSite`), so it is unit-tested on the laptop. It caught a real bug on the first phone pass: `refs.json` was saved without `"text": ["person"]`, so the model had no person class (now always written).
+  - **Model from the laptop in one command:** `tools/site_model_device.py --site <name>` pulls the setup, builds (about 1 min here), pushes the model back.
+  - **Order entry:** New order on the live screen (id + recipes from the menu + modifiers); the order comes in at the current stream time and is kept in the run's `orders_entered.jsonl`. `orders.json` is now optional.
+  - **QR reading** (ML Kit, `Codes.kt`): checkout cameras every 0.5 s, on closed-box crops or the checkout zones grown by half their size (the zone crop alone cut off a QR on a box sticking out of the zone). `code_read` events; the occupancy fallback hands over the order the code names (`by: code`). Tests: `CheckoutCodeTest` (2). Tests: 29.
+  - **QR on the phone: ALL PASS** (`sites/pizza_qr`: the pizza clip with a 56 px QR "A-2041" pasted on the box at the pass, 362–373 s). Read 0.4 s after it appeared (48 px code area), 18 reads in 11 s, hand-over decided by the code. Detector 45 ms p50, 0 dropped, 102 checks $0.014.
+  - **Setup-by-UI check** (`tools/check_setup_ui.py`): adb taps the whole setup of the pizza site as a new site `pizza_ui` (camera, 5 zones + ignored area, 2 classes with rectangles, menu copy), with no JSON touched. The site it writes matches `sites/pizza_trailer` (all zone corners and rectangles within 1 px, same flow and classes).
+    - Then it builds the model with `site_model_device.py`, Check says "Ready to run", and the run gets order A-2041 typed in the New order dialog: **ALL PASS** (setup 11/11 and run 8/8: both verdicts, both packings, hand-over of A-2041, no false alarms, never paused). Detector 44.7 ms p50, 0 of 2150 dropped, 96 checks $0.013.
+    - Needs Xiaomi "USB debugging (Security settings)" on the phone for adb input (also removes the install tap).
+  - **Not yet tested:** a live RTSP camera in the app (everything so far ran from recordings), and the Redmi tablet.
+
 ## Risks
 - **Closed-box detection on the client's boxes** (the pizza clip never detected them). We only find out from recording R1.
 - **Redmi detector speed:** Exp 2 hasn't been run. The plan assumes about 30 inferences/s at 640.

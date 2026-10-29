@@ -1,6 +1,7 @@
 package com.ald.ra.app
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
@@ -11,15 +12,19 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import com.ald.ra.engine.Order
+import com.ald.ra.engine.OrderItem
 
 /**
- * Live screen + entry point for adb:
- *   am start -n com.ald.ra/.MainActivity --es mode start --es site pizza_trailer [--es speed 2] [--es params '{...}']
- *   am start -n com.ald.ra/.MainActivity --es mode stop
+ * Live screen (site picker, setup, start/stop, order entry) + entry point for adb:
+ *   am start -n com.ald.ra/com.ald.ra.app.MainActivity --es mode start --es site pizza_trailer [--es speed 2] [--es params '{...}']
+ *   am start -n com.ald.ra/com.ald.ra.app.MainActivity --es mode stop
  * Site packs live in files/sites/<site>/ (pushed by tools/check_device.py or by hand).
  */
 class MainActivity : Activity() {
@@ -55,14 +60,16 @@ class MainActivity : Activity() {
             textSize = size; setTextColor(Color.WHITE); if (mono) typeface = Typeface.MONOSPACE; setPadding(8, 4, 8, 4)
         }
         status = text(12f)
-        val start = Button(this).apply { text = "Start"; setOnClickListener {
-            startForegroundService(Intent(this@MainActivity, AnalyticsService::class.java).putExtra("mode", "start")
-                .putExtra("site", AnalyticsService.current?.cfg?.site ?: "pizza_trailer"))
-        } }
-        val stop = Button(this).apply { text = "Stop"; setOnClickListener {
-            startForegroundService(Intent(this@MainActivity, AnalyticsService::class.java).putExtra("mode", "stop"))
-        } }
-        val top = LinearLayout(this).apply { addView(start); addView(stop); addView(status, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)) }
+        fun btn(t: String, on: () -> Unit) = Button(this).apply { text = t; isAllCaps = false; setOnClickListener { on() } }
+        siteBtn = btn("Site: $siteName") { pickSite() }
+        val start = btn("Start") {
+            startForegroundService(Intent(this@MainActivity, AnalyticsService::class.java).putExtra("mode", "start").putExtra("site", siteName))
+        }
+        val stop = btn("Stop") { startForegroundService(Intent(this@MainActivity, AnalyticsService::class.java).putExtra("mode", "stop")) }
+        val setup = btn("Setup") { startActivity(Intent(this, SetupActivity::class.java).putExtra("site", siteName)) }
+        val order = btn("New order") { newOrder() }
+        val top = LinearLayout(this).apply { listOf(siteBtn, setup, start, stop, order).forEach { addView(it) }
+            addView(status, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)) }
         cams = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         orders = text(15f)
         feed = text(11f)
@@ -83,6 +90,57 @@ class MainActivity : Activity() {
             addView(top)
             addView(body, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
         })
+    }
+
+    private val prefs by lazy { getSharedPreferences("ui", MODE_PRIVATE) }
+    private var siteName: String
+        get() = prefs.getString("site", null) ?: sites().firstOrNull() ?: "pizza_trailer"
+        set(v) { prefs.edit().putString("site", v).apply(); siteBtn.text = "Site: $v" }
+    private lateinit var siteBtn: Button
+
+    private fun sites() = getExternalFilesDir("sites")!!.listFiles().orEmpty().filter { it.isDirectory }.map { it.name }.sorted()
+
+    private fun pickSite() {
+        val names = sites()
+        AlertDialog.Builder(this).setTitle("Site").setItems((names + "+ New site").toTypedArray()) { _, i ->
+            if (i < names.size) { siteName = names[i]; return@setItems }
+            val name = EditText(this).apply { hint = "site name, e.g. client_kitchen"; isSingleLine = true; imeOptions = noFullscreenIme }
+            AlertDialog.Builder(this).setTitle("New site").setView(name).setPositiveButton("OK") { _, _ ->
+                val n = name.text.toString().trim().replace(Regex("[^A-Za-z0-9_-]+"), "_")
+                if (n.isEmpty()) return@setPositiveButton
+                java.io.File(getExternalFilesDir("sites"), n).mkdirs()
+                siteName = n
+                startActivity(Intent(this, SetupActivity::class.java).putExtra("site", n))
+            }.setNegativeButton("Cancel", null).show()
+        }.show()
+    }
+
+    /** Type an order (spec §1.5): an id and one or more recipes, each with optional modifiers ("no basil, +olives"). */
+    private fun newOrder() {
+        val s = AnalyticsService.current?.takeIf { it.state == "running" }
+            ?: return Toast.makeText(this, "start a run first: orders go to the running site", Toast.LENGTH_LONG).show()
+        val ids = s.orderIds
+        val id = EditText(this).apply { setText("T-%03d".format(ids.size + 1)); isSingleLine = true; imeOptions = noFullscreenIme }
+        val items = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val rows = mutableListOf<Pair<String, EditText>>()
+        val menu = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        for (r in s.recipes) menu.addView(Button(this).apply { text = "+ $r"; isAllCaps = false; setOnClickListener {
+            val mods = EditText(this@MainActivity).apply { hint = "modifiers: no basil, +olives"; isSingleLine = true; imeOptions = noFullscreenIme }
+            rows += r to mods
+            items.addView(TextView(this@MainActivity).apply { text = r; textSize = 16f })
+            items.addView(mods)
+        } })
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 10, 40, 0)
+            addView(TextView(this@MainActivity).apply { text = "Order id" }); addView(id)
+            addView(TextView(this@MainActivity).apply { text = "Add dishes" }); addView(menu); addView(items) }
+        AlertDialog.Builder(this).setTitle("New order").setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Add order") { _, _ ->
+            val oid = id.text.toString().trim()
+            when {
+                oid.isEmpty() || rows.isEmpty() -> Toast.makeText(this, "an order needs an id and at least one dish", Toast.LENGTH_LONG).show()
+                oid in ids -> Toast.makeText(this, "order $oid already exists", Toast.LENGTH_LONG).show()
+                else -> s.addOrder(Order(oid, rows.map { (r, m) -> OrderItem(r, m.text.toString().split(",").map { it.trim() }.filter { it.isNotEmpty() }) }))
+            }
+        }.setNegativeButton("Cancel", null).show()
     }
 
     private fun refresh() {

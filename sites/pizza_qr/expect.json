@@ -1,0 +1,58 @@
+{
+  "note": "pizza_trailer events, plus the QR read at the pass naming the order handed over (spec 4.4).",
+  "events": [
+    {
+      "kind": "dish_verdict",
+      "t": 224.6,
+      "tol": 5,
+      "has": {
+        "recipe": "Prosciutto cotto",
+        "missing": [],
+        "extra": []
+      }
+    },
+    {
+      "kind": "dish_verdict",
+      "t": 259.0,
+      "tol": 5,
+      "has": {
+        "recipe": "Margherita",
+        "missing": [],
+        "extra": []
+      }
+    },
+    {
+      "kind": "unit_packed",
+      "t": 317.0,
+      "tol": 5
+    },
+    {
+      "kind": "unit_packed",
+      "t": 360.8,
+      "tol": 5
+    },
+    {
+      "kind": "code_read",
+      "t": 362.5,
+      "tol": 3,
+      "has": {
+        "code": "A-2041",
+        "zone": "pass",
+        "known": true
+      }
+    },
+    {
+      "kind": "handed_over",
+      "t": 373.0,
+      "tol": 5,
+      "has": {
+        "order": "A-2041",
+        "by": "code"
+      }
+    }
+  ],
+  "never": [
+    "order_uncertain",
+    "packing_unmatched"
+  ]
+}
