@@ -1,0 +1,27 @@
+{
+  "classes": [
+    "open box",
+    "pizza",
+    "person"
+  ],
+  "imgsz": 640,
+  "layout": "NCHW float32 RGB 0-1, letterboxed with 114 grey",
+  "outputs": "[1, 4+nc+32, N] (xywh normalised to the input square, class scores, mask coefs) + mask protos",
+  "check": {
+    "open box": {
+      "torch": 56,
+      "reproduced": 56,
+      "extra": 0
+    },
+    "pizza": {
+      "torch": 37,
+      "reproduced": 37,
+      "extra": 0
+    },
+    "person": {
+      "torch": 31,
+      "reproduced": 31,
+      "extra": 0
+    }
+  }
+}

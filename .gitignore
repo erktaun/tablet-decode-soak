@@ -1,5 +1,5 @@
 results/
-tools/
+tools/mediamtx*
 clips/build/
 __pycache__/
 android/.gradle/
@@ -18,3 +18,6 @@ android/engine/build/
 sites/*/refs/*.png
 sites/*/refs/*.jpg
 sites/*/model*.tflite
+sites/*/background/
+sites/*/*.mp4
+android/analytics/build/

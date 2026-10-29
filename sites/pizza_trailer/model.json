@@ -6,7 +6,7 @@
   ],
   "imgsz": 640,
   "layout": "NCHW float32 RGB 0-1, letterboxed with 114 grey",
-  "outputs": "[1, 4+nc+32, N] (xywh in input pixels, class scores, mask coefs) + mask protos",
+  "outputs": "[1, 4+nc+32, N] (xywh normalised to the input square, class scores, mask coefs) + mask protos",
   "check": {
     "open box": {
       "torch": 56,

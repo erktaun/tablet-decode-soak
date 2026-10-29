@@ -1,0 +1,11 @@
+{
+  "note": "What a run on this site must produce (tools/check_device.py). Times are stream seconds, tolerance in s. Same events as the laptop golden test (PizzaParityTest).",
+  "events": [
+    {"kind": "dish_verdict", "t": 224.6, "tol": 5, "has": {"recipe": "Prosciutto cotto", "missing": [], "extra": []}},
+    {"kind": "dish_verdict", "t": 259.0, "tol": 5, "has": {"recipe": "Margherita", "missing": [], "extra": []}},
+    {"kind": "unit_packed", "t": 317.0, "tol": 5},
+    {"kind": "unit_packed", "t": 360.8, "tol": 5},
+    {"kind": "handed_over", "t": 373.0, "tol": 5, "has": {"order": "A-2041"}}
+  ],
+  "never": ["order_uncertain", "packing_unmatched"]
+}
