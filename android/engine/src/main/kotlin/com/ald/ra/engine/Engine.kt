@@ -165,8 +165,9 @@ class Engine(
 
     /**
      * Assign finished dishes to order items (spec §3.7): every unpacked unit is (re)matched together with the new one,
-     * trying every pairing, to maximise the total score (matching ingredients - extra ingredients). Ties go to older
-     * orders, then earlier items. Packed units keep their order. Emits the new unit's verdict, and a
+     * trying every pairing, to maximise the total score (matching ingredients - extra ingredients). Ties go to fewer
+     * missing ingredients (sauce + mozzarella is a Margherita, not a prosciutto without ham), then older orders, then
+     * earlier items. Packed units keep their order. Emits the new unit's verdict, and a
      * `dish_reassigned` event for any earlier unit whose order changed.
      */
     fun assignOrders(newUnit: OrderUnit, t: Double, known: Double) {
@@ -179,25 +180,29 @@ class Engine(
             val exp = expected(s.second.items[s.third]).toSet(); val f = u.contents.toSet()
             (exp intersect f).size - (f - exp).size
         }
+        val missing = { u: OrderUnit, s: Triple<Int, Order, Int> -> (expected(s.second.items[s.third]).toSet() - u.contents.toSet()).size }
         // Exhaustive search over injective unit -> slot maps (a unit may also get no slot when slots run out).
         var best: List<Int>? = null
-        var bestKey = Pair(Int.MIN_VALUE, Int.MAX_VALUE)
-        fun rec(k: Int, used: BooleanArray, cur: IntArray, sc: Int, age: Int) {
+        var bestKey = Triple(Int.MIN_VALUE, Int.MAX_VALUE, Int.MAX_VALUE)
+        fun rec(k: Int, used: BooleanArray, cur: IntArray, sc: Int, miss: Int, age: Int) {
             if (k == free.size) {
-                if (sc > bestKey.first || (sc == bestKey.first && age < bestKey.second)) { bestKey = sc to age; best = cur.toList() }
+                val (bs, bm, ba) = bestKey
+                if (sc > bs || (sc == bs && (miss < bm || (miss == bm && age < ba)))) { bestKey = Triple(sc, miss, age); best = cur.toList() }
                 return
             }
             var any = false
             for (j in slots.indices) if (!used[j]) {
                 any = true
                 used[j] = true; cur[k] = j
-                rec(k + 1, used, cur, sc + score(free[k], slots[j]), age + slots[j].first * 100 + slots[j].third)
+                rec(k + 1, used, cur, sc + score(free[k], slots[j]), miss + missing(free[k], slots[j]), age + slots[j].first * 100 + slots[j].third)
                 used[j] = false
             }
-            if (!any) { cur[k] = -1; rec(k + 1, used, cur, sc, age) }
+            if (!any) { cur[k] = -1; rec(k + 1, used, cur, sc, miss, age) }
         }
-        if (free.size <= 6 && slots.size <= 12) rec(0, BooleanArray(slots.size), IntArray(free.size), 0, 0)
-        else best = free.map { u -> slots.indices.maxByOrNull { score(u, slots[it]) } ?: -1 }  // too big: greedy
+        if (free.size <= 6 && slots.size <= 12) rec(0, BooleanArray(slots.size), IntArray(free.size), 0, 0, 0)
+        else best = free.map { u ->  // too big: greedy
+            slots.indices.maxWithOrNull(compareBy<Int>({ score(u, slots[it]) }, { -missing(u, slots[it]) })) ?: -1
+        }
         if (newUnit.contents.isEmpty()) log.add(t, "dish_verdict", known, "dish" to newUnit.id, "order" to null, "recipe" to null,
             "found" to emptyList<String>(), "missing" to emptyList<String>(), "extra" to emptyList<String>(),
             "note" to "no ingredient confirmed; not matched to an order")
@@ -256,7 +261,10 @@ class AssemblyStation(private val e: Engine, val zone: Zone) {
         val seen = mutableListOf<Pair<Base, Det>>()
         for (d in dets) {
             val best = active.maxByOrNull { iou(it.box, d.box) }
-            val b = if (best != null && iou(best.box, d.box) >= p.baseIou) best else Base(d.box, f.t).also { bases += it }
+            val dist = { o: Base -> kotlin.math.hypot(o.box.cx - d.box.cx, o.box.cy - d.box.cy) }
+            val moved = { active.filter { o -> o.last < f.t && f.t - o.last <= p.baseJumpS + 1e-6 && seen.none { it.first === o } &&
+                dist(o) <= p.trackMaxJump * maxOf(o.box.size, d.box.size) }.minByOrNull(dist) }
+            val b = if (best != null && iou(best.box, d.box) >= p.baseIou) best else moved() ?: Base(d.box, f.t).also { bases += it }
             b.box = d.box; b.last = f.t
             if (kotlin.math.hypot(d.box.cx - b.anchor.cx, d.box.cy - b.anchor.cy) > p.checkStillShift * d.box.size) {
                 b.anchor = d.box; b.stillSince = f.t

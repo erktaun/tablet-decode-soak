@@ -96,6 +96,11 @@ data class Params(
     val baseIou: Double = 0.3,
     val baseMinS: Double = 2.0,
     val baseGoneS: Double = 10.0,
+    /**
+     * A base moved too fast to overlap its last box (IoU < baseIou) still continues if it was seen within this time
+     * and its centre moved at most trackMaxJump box sizes (a dish slid along the line between two frames).
+     */
+    val baseJumpS: Double = 0.6,
     /** A base reappearing where a finished, not yet packed dish was, within this time, resumes that dish. */
     val baseResumeS: Double = 30.0,
     // ingredient checks

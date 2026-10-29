@@ -100,6 +100,8 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
     private val inferMs = mutableListOf<Double>()
     private val engineMs = mutableListOf<Double>()
     private val nChecks = AtomicInteger()
+    private val checkErrors = AtomicInteger()
+    @Volatile private var lastCheckError: String? = null
     private var costUsd = 0.0
     private val checkLat = mutableListOf<Double>()
     private var lastT = 0.0
@@ -165,9 +167,11 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
         val runner = CheckRunner { req, done ->
             if (chk == null) return@CheckRunner done(null)
             checks.execute {
-                val res = try { chk.check(req) } catch (e: Exception) { log("check_error ${e.message?.take(200)}"); null }
+                val res = try { chk.check(req) } catch (e: Exception) {
+                    lastCheckError = e.message?.take(200); checkErrors.incrementAndGet(); log("check_error $lastCheckError"); null
+                }
                 if (res != null) synchronized(checkLat) {
-                    nChecks.incrementAndGet(); costUsd += res.costUsd; checkLat += res.latencyS
+                    nChecks.incrementAndGet(); costUsd += res.costUsd; checkLat += res.latencyS; lastCheckError = null
                     callsFile.appendText(Event.toEl(mapOf("dish" to req.baseId, "t" to req.t, "probs" to res.probs, "latency_s" to res.latencyS,
                         "tokens_in" to res.tokensIn, "cost_usd" to res.costUsd, "cached" to res.cached)).toString() + "\n")
                 }
@@ -296,13 +300,14 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
             "cams" to cams.associate { it.name to mapOf("shots" to it.shots.get(), "dropped" to it.dropped.get()) },
             "streams" to streams.associate { it.url to mapOf("frames" to it.frames.get(), "state" to it.state, "decoder" to it.decoder,
                 "errors" to it.errors.get(), "last_error" to it.lastError) },
-            "checks" to nChecks.get(), "check_p50_s" to p(lat, 0.5), "cost_usd" to costUsd, "thermal" to pm.currentThermalStatus,
+            "checks" to nChecks.get(), "check_errors" to checkErrors.get(), "check_p50_s" to p(lat, 0.5), "cost_usd" to costUsd, "thermal" to pm.currentThermalStatus,
         )
         metricsFile.appendText(Event.toEl(m).toString() + "\n")
         statusText = "%s · %s · t %.1f s · detector %s ms (p50, %d in 5 s) · checks %d (%s s, \$%.4f) · thermal %d".format(
             state, backend, lastT, p(inf, 0.5) ?: "-", inf.size, nChecks.get(), p(lat, 0.5) ?: "-", costUsd, pm.currentThermalStatus) +
             "\n" + cams.joinToString("  ") { "${it.name}: ${it.shots.get()} shots, ${it.dropped.get()} dropped" } +
-            "  ·  checker: $checker"
+            "  ·  checker: $checker" +
+            (lastCheckError?.let { "\nCHECKS FAILING (${checkErrors.get()}): $it" } ?: "")
         onUpdate?.invoke()
     }
 

@@ -182,6 +182,7 @@ adb pull <site pack> → python make_site_model.py <site pack> → adb push mode
 1. **Find bases.**
    - Detect bases inside the assembly zone and track them.
    - Hands keep covering bases, so a base is also kept **by position**: one that reappears where a base was (IoU ≥ 0.3) within 6 s is the same base.
+   - A base slid along the line can overlap its last box by less than that in one frame. It is still the same base when it was seen within 0.6 s and its centre moved at most one box size (`baseJumpS`). Without this, the phone run of 2026-10-29 took a sliding Margherita for the finished Prosciutto "reappearing" (IoU 0.29 vs 0.3), and the two pizzas swapped records.
    - A base seen for ≥ 2 s raises `dish_started`.
 2. **Decide when to check.** No hand model is used; this replaces the Subway demo's MediaPipe gating. A crop is sent only when all of these hold:
    - detector confidence ≥ 0.8 (a stand-in for "not covered");
@@ -200,7 +201,7 @@ adb pull <site pack> → python make_site_model.py <site pack> → adb push mode
    - The time recorded is crop time + API latency.
 6. **Show live.** The checklist ticks ingredients off as they are confirmed.
 7. **On the done signal, match the dish to an order.**
-   - Done bases are matched to open orders by the best overall ingredient fit, trying every pairing. Ties go to the oldest order.
+   - Done bases are matched to open orders by the best overall ingredient fit, trying every pairing. Ties go to the item with fewer missing ingredients (sauce + mozzarella is a Margherita, not a Prosciutto without ham), then the oldest order.
    - `missing` = expected − confirmed; `extra` = confirmed − expected. Modifiers adjust "expected".
 8. **Hand over to Step 2:** `{base_id, order_id, contents, verdict, done_t, zone, last_box}`.
    - In `in_container` mode this record already is the unit, and Step 2 is skipped.

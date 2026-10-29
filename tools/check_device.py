@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 from run_test import Adb, log  # noqa: E402
 
 PKG = "com.ald.ra"
+ACT = f"{PKG}/com.ald.ra.app.MainActivity"
 FILES = f"/storage/emulated/0/Android/data/{PKG}/files"
 APK = ROOT / "android" / "analytics" / "build" / "outputs" / "apk" / "debug" / "analytics-debug.apk"
 JBR = Path.home() / "Documents" / "libs" / "android-studio" / "jbr"
@@ -114,12 +115,12 @@ def main():
     if not a.no_install:
         log("installing (on Xiaomi, tap 'Install' on the device if asked)")
         adb.run("install", "-r", str(APK), timeout=300)
-    adb.shell(f"am start -n {PKG}/.MainActivity")  # creates the app's files/ dirs
+    adb.shell(f"am start -n {ACT}")  # creates the app's files/ dirs
     time.sleep(2)
     push_site(adb, site)
     if a.key:
         key = env_key(a.key)
-        r = subprocess.run([adb.exe, "-s", adb.serial, "shell", f"run-as {PKG} sh -c 'cat > files/openai.key'"],
+        r = subprocess.run([adb.exe, "-s", adb.serial, "shell", f"run-as {PKG} sh -c 'mkdir -p files && cat > files/openai.key'"],
                            input=key, text=True, capture_output=True)
         if r.returncode != 0:
             sys.exit(f"could not store the key: {r.stderr.strip()}")
@@ -131,7 +132,7 @@ def main():
         extras["params"] = a.params
     if a.save_dets:
         extras["save_dets"] = "true"
-    args = ["shell", "am", "start", "-n", f"{PKG}/.MainActivity"]
+    args = ["shell", "am", "start", "-n", ACT]
     for k, v in extras.items():
         args += ["--es", k, f"'{v}'" if k == "params" else v]
     adb.run(*args)
@@ -147,11 +148,11 @@ def main():
             last = m
             j = json.loads(m)
             log(f"  t={j['t']:.0f}s  detector {j['infer_ms_p50']} ms p50 ({j['backend']}), {j['shots_5s']} shots/5s, "
-                f"checks {j['checks']}, thermal {j['thermal']}, dropped {sum(c['dropped'] for c in j['cams'].values())}")
+                f"checks {j['checks']} ({j.get('check_errors', 0)} failed), thermal {j['thermal']}, dropped {sum(c['dropped'] for c in j['cams'].values())}")
         time.sleep(5)
     else:
         log("timed out; stopping the run")
-        adb.run("shell", "am", "start", "-n", f"{PKG}/.MainActivity", "--es", "mode", "stop")
+        adb.run("shell", "am", "start", "-n", ACT, "--es", "mode", "stop")
         time.sleep(5)
 
     out = ROOT / "out" / "device"

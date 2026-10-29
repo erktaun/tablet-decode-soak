@@ -97,6 +97,15 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
     - 640 + region of interest: packing, hand-over and both recipes correct, but one **false "extra salami"** on the ham pizza (3 checks in a row at 112–120 s while ham was being laid on an 80 px pizza) and one early verdict withdrawn.
     - This clip is outside the spec's camera guidance (dish ≥ 250 px), so expect this kind of error at 640 when the dish is small. Fixes: place the camera closer, or use a bigger model input (960/1280, 2.25–4× the compute).
 
+- **Day 3, in progress (2026-10-29).** Android app `android/analytics` (ExoPlayer → GL readback of the zones' region → LiteRT YOLOE on the GPU → engine; ingredient checks on a 4-thread pool; foreground service for long runs) and `tools/check_device.py` (build, install, push the site pack and key, run, pull, PASS/FAIL against `sites/<site>/expect.json`).
+  - **First phone run (Xiaomi 24129PN74G, SM8750): ALL PASS** on `pizza_trailer` (7 checks: both verdicts, both packings, hand-over, no false alarms). Detector on the GPU 45 ms p50, 2150 frames at 5 fps with 0 dropped, 95 checks (p50 0.6 s, $0.013), no thermal throttling. No false "extra salami" this time.
+  - **Two engine fixes found by the phone** (laptop and phone detections differ by one frame here, which was enough):
+    - A dish slid along the line overlapped its last box by IoU 0.29 (< 0.3) and became a new base, which then "resumed" the finished dish in that spot: the two pizzas swapped records. Bases now also continue on a short jump (seen ≤ 0.6 s ago, centre moved ≤ 1 box size; `baseJumpS`). Test: `AssemblyTest`.
+    - Recipe ties now go to fewer missing ingredients (sauce + mozzarella alone was matched to "Prosciutto, ham missing"). Test: `OrderMatchingTest`.
+    - Replaying the phone's own detections on the laptop gives the same correct events. Tests: 21, all green.
+  - The app shows "CHECKS FAILING" when the API can't be reached (the phone's Wi-Fi was off on the first try), and metrics count `check_errors`.
+  - Still to do on day 3: `pizza_trailer_2cam` on the phone, Android painter for the referee (optional, it is off by default).
+
 ## Risks
 - **Closed-box detection on the client's boxes** (the pizza clip never detected them). We only find out from recording R1.
 - **Redmi detector speed:** Exp 2 hasn't been run. The plan assumes about 30 inferences/s at 640.
