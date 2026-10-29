@@ -50,9 +50,11 @@ def build(site: Path, size: int):
         for it in items:
             per_img.setdefault(it["image"], []).append((cls, it["boxes"]))
     emb: dict[str, list] = {c: [] for c in names_v}
+    scales = []
     for img_name, entries in per_img.items():
         img = cv2.imread(str(site / "refs" / img_name))
         assert img is not None, f"can't read {img_name}"
+        scales.append(size / max(img.shape[:2]))  # the reference frame is letterboxed into size x size
         local = [c for c, _ in entries]
         bxs = [b for _, bs in entries for b in bs]
         ids = [i for i, (_, bs) in enumerate(entries) for _ in bs]
@@ -67,7 +69,7 @@ def build(site: Path, size: int):
         pe = tpe if pe is None else torch.cat([pe.to(tpe.device), tpe], dim=1)
     model = YOLOE(str(WEIGHTS))  # fresh model: the VP predictor leaves state behind
     model.set_classes(names_v + names_t, pe)
-    return model, names_v + names_t
+    return model, names_v + names_t, round(sum(scales) / len(scales), 4) if scales else None
 
 
 def frames_from(video: Path, n: int, dst: Path) -> list[Path]:
@@ -110,12 +112,14 @@ def main():
     ap.add_argument("--check-video", type=Path, help="video from one of the site's cameras, for the accuracy check")
     ap.add_argument("--check-frames", type=int, default=20)
     a = ap.parse_args()
-    model, names = build(a.site, a.size)
+    model, names, ref_scale = build(a.site, a.size)
     print("classes:", names)
     out = Path(model.export(format="litert", imgsz=a.size))
     dst = a.site / "model.tflite"
     shutil.move(out, dst)
-    info = dict(classes=names, imgsz=a.size, layout="NCHW float32 RGB 0-1, letterboxed with 114 grey",
+    # ref_scale: how much the reference frames were shrunk into the input square when the prompts were made. The app
+    # shows the detector each camera at about this scale (YOLOE's confidence drops when objects look a different size).
+    info = dict(classes=names, imgsz=a.size, ref_scale=ref_scale, layout="NCHW float32 RGB 0-1, letterboxed with 114 grey",
                 outputs="[1, 4+nc+32, N] (xywh normalised to the input square, class scores, mask coefs) + mask protos")
     if a.check_video:
         with tempfile.TemporaryDirectory() as td:

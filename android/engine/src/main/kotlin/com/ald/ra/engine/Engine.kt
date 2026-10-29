@@ -370,7 +370,9 @@ class PackingStation(private val e: Engine, val zone: Zone) {
     private val p = e.p
     private val poly = e.polys[zone.name]!!
 
-    private inner class Ep(val start: Double, var last: Double) { var unit: OrderUnit? = null; var box: Box? = null }
+    private inner class Ep(val start: Double, var last: Double) {
+        var unit: OrderUnit? = null; var box: Box? = null; var unmatched = false
+    }
     private var ep: Ep? = null
 
     fun onFrame(f: Frame) {
@@ -389,8 +391,12 @@ class PackingStation(private val e: Engine, val zone: Zone) {
             c.box = inZone.maxByOrNull { it.conf }?.box ?: c.box
             if (c.unit == null && c.last - c.start >= p.packMinS) {
                 val u = e.pendingFor(zone.name, c.start) { it.packedT == null && it.zone != zone.name }.firstOrNull()
-                if (u == null) e.log.add(c.start, "packing_unmatched", f.t, "zone" to zone.name,
-                    "note" to "a dish went into a container, but no finished dish was waiting")
+                if (u == null) {
+                    // Keep trying every frame (a dish may still become due), but report it once per episode.
+                    if (!c.unmatched) e.log.add(c.start, "packing_unmatched", f.t, "zone" to zone.name,
+                        "note" to "a dish went into a container, but no finished dish was waiting")
+                    c.unmatched = true
+                }
                 else {
                     c.unit = u
                     u.zone = zone.name

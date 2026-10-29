@@ -104,7 +104,13 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
     - Recipe ties now go to fewer missing ingredients (sauce + mozzarella alone was matched to "Prosciutto, ham missing"). Test: `OrderMatchingTest`.
     - Replaying the phone's own detections on the laptop gives the same correct events. Tests: 21, all green.
   - The app shows "CHECKS FAILING" when the API can't be reached (the phone's Wi-Fi was off on the first try), and metrics count `check_errors`.
-  - Still to do on day 3: `pizza_trailer_2cam` on the phone, Android painter for the referee (optional, it is off by default).
+  - **Two-camera site on the phone** (`pizza_trailer_2cam`: the clip cut into two cameras, both decoded once, 4300 detector frames, 0 dropped). It found three more problems:
+    - **Xiaomi froze the app** 5 s after Home was pressed, despite the foreground service (91 s lost). `check_device.py` now exempts the app from Doze, the app counts pauses (`pauses`, `paused_s` in metrics, "PAUSED BY THE SYSTEM" on screen) and the check fails a paused run. The phone also needs app settings → Battery saver → **No restrictions** (as for the soak app).
+    - **Detector scale.** The two small camera regions were enlarged 1.4–1.5× into the 640 input, and YOLOE's confidence halved. It is best near the scale the references had when the prompts were made (0.5 here). `make_site_model.py` now writes `ref_scale` to model.json, and the app uses at most 1.2 × that (spec §2).
+    - **Packing gap 3 s → 6 s.** At the new scale, folding a lid hid a boxed pizza for 3.6 s; the restarted episode took the next dish (still in the oven). `packing_unmatched` is now reported once per episode, not on every frame. Test: `PackingTest`. Tests: 22.
+  - Replaying the phone's detections on the laptop with the fixes gives correct packing and hand-over for both one-camera phone runs. One replay had a false "extra mushrooms" on the 80 px Prosciutto (3 wrong "yes" answers in a row): the same small-dish weakness as the "extra salami" at 640.
+  - **Final phone runs with all fixes: ALL PASS on both sites** (8 checks each, including "never paused"). One camera: 2150 frames, 0 dropped, detector 44 ms p50, 98 checks $0.013. Two cameras: 4300 frames, 0 dropped, 43 ms p50, 98 checks $0.013. No thermal throttling.
+  - Still to do on day 3: Android painter for the referee (optional, it is off by default).
 
 ## Risks
 - **Closed-box detection on the client's boxes** (the pizza clip never detected them). We only find out from recording R1.

@@ -119,7 +119,11 @@ data class Params(
     val cropSide: Int = 384,
     val cropPad: Double = 0.08,
     // packing
-    val packGapS: Double = 3.0,
+    /**
+     * A packing episode ends after this long with no dish in the zone. 6 s, not 3: folding the lid hid a boxed
+     * pizza for 3.6 s on the phone (pizza clip, 311.8-315.4 s), and the restart took the next dish, still in the oven.
+     */
+    val packGapS: Double = 6.0,
     val packMinS: Double = 1.0,
     // checkout (occupancy fallback when closed containers aren't detected)
     val occWindowS: Double = 3.0,

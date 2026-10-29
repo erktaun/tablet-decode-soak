@@ -35,14 +35,14 @@ import java.util.concurrent.atomic.AtomicLong
  * the detector's region of interest inside it (`roi`, camera pixels), and the size of the view read back for
  * crops, occupancy and the preview.
  */
-class CamView(val camera: Camera, val roi: Box, val modelSize: Int, viewMax: Int) {
+class CamView(val camera: Camera, val roi: Box, val modelSize: Int, viewMax: Int, maxScale: Double = 1.0) {
     val name = camera.name
     val w = camera.crop?.let { it[2] - it[0] } ?: camera.width.toDouble()
     val h = camera.crop?.let { it[3] - it[1] } ?: camera.height.toDouble()
     val viewScale = minOf(1.0, viewMax / maxOf(w, h))
     val viewW = Math.round(w * viewScale).toInt()
     val viewH = Math.round(h * viewScale).toInt()
-    val lb = Letterbox(roi.w, roi.h, modelSize)
+    val lb = Letterbox(roi.w, roi.h, modelSize, maxScale)
     private val free = ArrayBlockingQueue<Shot>(3).apply {
         repeat(3) { add(Shot(this@CamView, GlFrames.direct(4 * modelSize * modelSize), GlFrames.direct(4 * viewW * viewH))) }
     }

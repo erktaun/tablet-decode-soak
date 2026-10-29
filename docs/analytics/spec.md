@@ -154,6 +154,10 @@ adb pull <site pack> → python make_site_model.py <site pack> → adb push mode
   - 5 fps for assembly-only cameras;
   - **10 fps for cameras where containers get carried**.
 - Budget: about 32 ms per frame on the phone, so roughly 30 frames/s in total. Redmi numbers are pending from Exp 2.
+- Input: the camera's **region of interest** (the union of its zones, padded 5%), letterboxed into 640 × 640, at **about the scale the references had** when the prompts were made (`ref_scale` in model.json: 640 / the reference frame's long side, 0.5 for a 1280 frame). The app uses up to 1.2 × that, and less if the region doesn't fit.
+  - Why: YOLOE's confidence drops fast when objects look a different size than in the references. Pizza clip, 7 frames over both cameras, mean / worst confidence: 0.38 / 0.02 at 1×, 0.56 / 0.28 at 0.7×, **0.61 / 0.38 at 0.6×**, 0.60 / 0.09 at 0.5×, 0.41 / 0.03 at 0.4×. Found when the two-camera site (small regions, enlarged 1.4–1.5×) lost both pizzas and every box on the phone.
+  - So references must be drawn on frames from the same camera, at full resolution. A region of interest larger than 640 / (1.2 × ref_scale) pixels gets shrunk below the reference scale, and detection weakens (the full 1280 frame at 0.5× was borderline on this clip).
+- Measured on the phone (SM8750): 45 ms per frame on the GPU (LiteRT), including readback and NMS.
 
 ### Tracker
 - **Today:** `track.py` is ByteTrack-style without the Kalman filter.

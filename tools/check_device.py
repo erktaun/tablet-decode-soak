@@ -115,6 +115,10 @@ def main():
     if not a.no_install:
         log("installing (on Xiaomi, tap 'Install' on the device if asked)")
         adb.run("install", "-r", str(APK), timeout=300)
+    # Exempt the app from battery optimisation (Doze). Xiaomi's freezer also needs the in-app setting
+    # (app settings > Battery saver > No restrictions); the run reports any pause either way.
+    adb.shell(f"dumpsys deviceidle whitelist +{PKG}", check=False)
+    adb.shell(f"cmd appops set {PKG} RUN_ANY_IN_BACKGROUND allow", check=False)
     adb.shell(f"am start -n {ACT}")  # creates the app's files/ dirs
     time.sleep(2)
     push_site(adb, site)
@@ -172,7 +176,7 @@ def main():
         log(f"detector: {last['backend']}, p50 of 5-s medians {sorted(inf)[len(inf) // 2] if inf else '-'} ms; "
             f"dropped {sum(c['dropped'] for c in last['cams'].values())} of {sum(c['shots'] for c in last['cams'].values())} shots; "
             f"checks {last['checks']} (p50 {last['check_p50_s']} s, ${last['cost_usd']:.4f}); max thermal {max(m['thermal'] for m in ms)}")
-    errs = [l for l in (local / "log.txt").read_text().splitlines() if "error" in l.lower() or "FAILED" in l] if (local / "log.txt").exists() else []
+    errs = [l for l in (local / "log.txt").read_text().splitlines() if "error" in l.lower() or "FAILED" in l or " paused " in l] if (local / "log.txt").exists() else []
     for e in errs[:10]:
         log(f"  log: {e}")
     expect = site / "expect.json"
@@ -180,6 +184,10 @@ def main():
         log("no expect.json for this site: nothing to check")
         return
     res = check(events, json.loads(expect.read_text()))
+    if ms:
+        p = ms[-1].get("pauses", 0)
+        res.append((p == 0, "app never paused by the system" if p == 0 else
+                    f"app paused {p}x ({ms[-1].get('paused_s')} s) by the system: video was skipped, results are not valid"))
     for ok, msg in res:
         print(("PASS  " if ok else "FAIL  ") + msg)
     n_bad = sum(not ok for ok, _ in res)

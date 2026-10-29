@@ -102,6 +102,21 @@ class AssemblyTest {
     }
 }
 
+class PackingTest {
+    @Test
+    fun `an unmatched packing is reported once`() {
+        // A pizza sits in an open box in the boxing zone for 10 s, with no finished dish waiting.
+        val e = Engine(Fixtures.site(Zone("a", "cam0", Role.ASSEMBLY, listOf(listOf(0.0, 0.0), listOf(400.0, 0.0), listOf(400.0, 720.0), listOf(0.0, 720.0))),
+            Zone("b", "cam0", Role.PACKING, listOf(listOf(600.0, 0.0), listOf(1280.0, 0.0), listOf(1280.0, 720.0), listOf(600.0, 720.0)))),
+            Fixtures.menu, emptyList(), Fixtures.noChecks)
+        val s = Scene()
+        Scene.Actor("open box", "cam0").also { s.actors += it }.at(0.0, Box(700.0, 300.0, 820.0, 420.0)).at(10.0, Box(700.0, 300.0, 820.0, 420.0))
+        Scene.Actor("pizza", "cam0").also { s.actors += it }.at(0.0, Box(720.0, 320.0, 800.0, 400.0)).at(10.0, Box(720.0, 320.0, 800.0, 400.0))
+        s.run(e, 10.0)
+        assertEquals(1, e.kinds().count { it == "packing_unmatched" })
+    }
+}
+
 class OrderMatchingTest {
     @Test
     fun `a tie goes to the recipe with nothing missing`() {

@@ -60,6 +60,13 @@ data class RunCfg(
 }
 
 /**
+ * The detector sees each camera at up to REF_ZOOM x the reference scale. Pizza clip, 7 frames over both cameras
+ * (reference scale 0.5): mean / worst confidence 0.60 / 0.09 at 0.5x, 0.61 / 0.38 at 0.6x, 0.56 / 0.28 at 0.7x,
+ * 0.38 / 0.02 at 1x. Tuned on that one clip.
+ */
+private const val REF_ZOOM = 1.2
+
+/**
  * One analytics run: site pack -> streams -> detector -> engine -> events. Files in runs/<run_id>/:
  * events.jsonl (live, as events happen), events_final.jsonl (sorted, at the end), decision_calls.jsonl,
  * metrics.jsonl (every 5 s), log.txt, done.json (when finished), detections.jsonl (if asked).
@@ -102,6 +109,11 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
     private val nChecks = AtomicInteger()
     private val checkErrors = AtomicInteger()
     @Volatile private var lastCheckError: String? = null
+    // Vendor freezers (Xiaomi) can stop the whole process in the background despite the foreground service.
+    // A metrics tick that comes late by more than 5 s is counted as a pause.
+    private var lastSampleNs = 0L
+    private var pauses = 0
+    private var pausedS = 0.0
     private var costUsd = 0.0
     private val checkLat = mutableListOf<Double>()
     private var lastT = 0.0
@@ -118,7 +130,10 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
         site = s
         val info = json.parseToJsonElement(File(siteDir, "model.json").readText()).jsonObject
         val size = info["imgsz"]!!.jsonPrimitive.content.toInt()
-        cams = site.cameras.map { c -> CamView(c, roi(c.name), size, cfg.viewMax) }
+        // Show the detector each camera at about the scale its reference boxes had when the prompts were made
+        // (model.json ref_scale): YOLOE's confidence drops fast when dishes look much bigger or smaller (spec §2).
+        val maxScale = info["ref_scale"]?.jsonPrimitive?.content?.toDouble()?.let { it * REF_ZOOM } ?: 1.0
+        cams = site.cameras.map { c -> CamView(c, roi(c.name), size, cfg.viewMax, maxScale) }
         val fps = site.cameras.associate { it.name to it.fps }
         streams = cams.groupBy { it.camera.url }.map { (url, cs) ->
             val file = if (url.startsWith("file:")) url.removePrefix("file:").let { n ->
@@ -290,6 +305,15 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
     }
 
     private fun sampleMetrics() {
+        val nowNs = SystemClock.elapsedRealtimeNanos()
+        if (lastSampleNs != 0L) {
+            val late = (nowNs - lastSampleNs) / 1e9 - 5.0
+            if (late > 5.0) {
+                pauses++; pausedS += late
+                log("paused %.0f s: the system stopped the app (on Xiaomi: app settings, Battery saver, No restrictions)".format(late))
+            }
+        }
+        lastSampleNs = nowNs
         val (inf, eng) = synchronized(inferMs) { val r = inferMs.sorted() to engineMs.sorted(); inferMs.clear(); engineMs.clear(); r }
         val lat = synchronized(checkLat) { checkLat.sorted() }
         fun p(l: List<Double>, q: Double) = if (l.isEmpty()) null else Math.round(l[minOf(l.size - 1, (l.size * q).toInt())] * 10) / 10.0
@@ -300,14 +324,15 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
             "cams" to cams.associate { it.name to mapOf("shots" to it.shots.get(), "dropped" to it.dropped.get()) },
             "streams" to streams.associate { it.url to mapOf("frames" to it.frames.get(), "state" to it.state, "decoder" to it.decoder,
                 "errors" to it.errors.get(), "last_error" to it.lastError) },
-            "checks" to nChecks.get(), "check_errors" to checkErrors.get(), "check_p50_s" to p(lat, 0.5), "cost_usd" to costUsd, "thermal" to pm.currentThermalStatus,
+            "checks" to nChecks.get(), "check_errors" to checkErrors.get(), "pauses" to pauses, "paused_s" to Math.round(pausedS * 10) / 10.0, "check_p50_s" to p(lat, 0.5), "cost_usd" to costUsd, "thermal" to pm.currentThermalStatus,
         )
         metricsFile.appendText(Event.toEl(m).toString() + "\n")
         statusText = "%s · %s · t %.1f s · detector %s ms (p50, %d in 5 s) · checks %d (%s s, \$%.4f) · thermal %d".format(
             state, backend, lastT, p(inf, 0.5) ?: "-", inf.size, nChecks.get(), p(lat, 0.5) ?: "-", costUsd, pm.currentThermalStatus) +
             "\n" + cams.joinToString("  ") { "${it.name}: ${it.shots.get()} shots, ${it.dropped.get()} dropped" } +
             "  ·  checker: $checker" +
-            (lastCheckError?.let { "\nCHECKS FAILING (${checkErrors.get()}): $it" } ?: "")
+            (lastCheckError?.let { "\nCHECKS FAILING (${checkErrors.get()}): $it" } ?: "") +
+            (if (pauses > 0) "\nPAUSED BY THE SYSTEM %d× (%.0f s): set Battery saver to No restrictions".format(pauses, pausedS) else "")
         onUpdate?.invoke()
     }
 

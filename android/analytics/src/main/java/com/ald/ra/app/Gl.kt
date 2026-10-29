@@ -15,8 +15,8 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 
 /** Where an image of size srcW x srcH lands in a size x size letterboxed square (same rounding as ultralytics). */
-class Letterbox(srcW: Double, srcH: Double, size: Int) {
-    val scale = minOf(size / srcW, size / srcH)
+class Letterbox(srcW: Double, srcH: Double, size: Int, maxScale: Double = 1.0) {
+    val scale = minOf(size / srcW, size / srcH, maxScale)
     val w = Math.round(srcW * scale).toInt()
     val h = Math.round(srcH * scale).toInt()
     val x = (size - w) / 2
