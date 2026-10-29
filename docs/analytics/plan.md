@@ -71,7 +71,8 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
 - **Day 2, in progress (2026-10-29).**
   - **Model export verified.** YOLOE with the pizza clip's visual-prompt classes exports to TFLite (`tools/make_site_model.py`, 40.6 MB) and reproduces 100% of PyTorch's boxes on 20 frames (open box 56/56, pizza 37/37, person 31/31).
   - **Order matching over every pairing.** `dish_reassigned` when a later dish fixes an earlier tie. Two unit tests.
-  - **Custody written** (`Custody.kt`: parked, carried, transit, shared map, QR override, checkout hand-over). **Scenario tests not written yet**, so it is unproven.
+  - **Custody done and tested** (`Custody.kt`: parked, carried, transit, shared map, QR override, checkout hand-over). `CustodyTest` has 8 scripted scenes, one per row of the spec §4.4 table. All pass; disabling the carried rule makes 3 of them fail.
+  - **Day 2 still to do:** referee (off by default), and the synthetic multi-camera run from pizza-clip crops.
   - **640 px finding.** The tablet runs the detector at 640; the Python demo ran at 1280. On this wide clip (pizza about 80 px) a full-frame 640 input breaks the make line and loses the customer. Two changes:
     - The detector runs on a **region of interest = the union of the camera's zones** (app default, to build on day 3; tested in Python with `roi` in the scene config).
     - Rules that don't depend on resolution:
