@@ -47,7 +47,8 @@ data class RunCfg(
     val viewMax: Int,       // long side of the camera view read back for crops, occupancy and preview
     val gpu: Boolean,
     val params: String?,    // JSON merged over the site's params
-    val saveDets: Boolean,  // write every frame's detections (detections.jsonl), for comparing with the laptop
+    val saveDets: Boolean,  // write every frame's detections (detections.jsonl): replaying a run on the laptop needs them
+    val snapshotS: Double,  // a still per camera every this many seconds (frames/<camera>/), 0 = off
 ) {
     companion object {
         fun from(extras: Bundle?): RunCfg {
@@ -55,7 +56,7 @@ data class RunCfg(
             val site = s("site") ?: "pizza_trailer"
             return RunCfg(site, s("run_id") ?: (SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + "-" + site),
                 s("speed")?.toFloat() ?: 1f, s("view_max")?.toInt() ?: 1920, s("gpu") != "false", s("params"),
-                s("save_dets") == "true")
+                s("save_dets") != "false", s("snapshot_s")?.toDouble() ?: 2.0)
         }
     }
 }
@@ -70,7 +71,9 @@ private const val REF_ZOOM = 1.2
 /**
  * One analytics run: site pack -> streams -> detector -> engine -> events. Files in runs/<run_id>/:
  * events.jsonl (live, as events happen), events_final.jsonl (sorted, at the end), decision_calls.jsonl,
- * metrics.jsonl (every 5 s), log.txt, done.json (when finished), detections.jsonl (if asked).
+ * metrics.jsonl (every 5 s), log.txt, done.json (when finished), detections.jsonl (every frame's detections),
+ * frames/<camera>/<t>.jpg (a still every snapshot_s), crops/ (the image of every ingredient check),
+ * orders_entered.jsonl. Everything needed to see afterwards what happened (docs/analytics/RUNBOOK.md §6).
  */
 class Session(private val ctx: Context, val cfg: RunCfg) {
     val siteDir = File(ctx.getExternalFilesDir("sites"), cfg.site)
@@ -120,6 +123,7 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
     private var lastT = 0.0
     private var ended = 0
     private val lastPreview = mutableMapOf<String, Long>()
+    private val lastSnap = mutableMapOf<String, Double>()
     private val dishes = linkedMapOf<Int, MutableMap<String, Any?>>()
     private val codeReader: CodeReader?
 
@@ -161,7 +165,11 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
     }
 
     fun start() {
+        val pkg = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
         File(dir, "run.json").writeText(org.json.JSONObject().put("site", cfg.site).put("run_id", cfg.runId).put("speed", cfg.speed)
+            // event times are seconds since this moment (RTSP), so camera recordings can be lined up with them
+            .put("started_at", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(Date(System.currentTimeMillis())))
+            .put("app_version", "${pkg.versionName} (${pkg.longVersionCode})").put("device", "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}, Android ${android.os.Build.VERSION.RELEASE}")
             .put("view_max", cfg.viewMax).put("gpu", cfg.gpu).put("params", cfg.params)
             .put("rois", org.json.JSONObject(cams.associate { it.name to it.roi.toList().toString() })).toString(2))
         detH.post {
@@ -183,6 +191,7 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
                 site.classes.base.firstOrNull() ?: "dish")
         } else { checker = "off (no key)"; null }
         val runner = CheckRunner { req, done ->
+            req.jpeg?.let { j -> runCatching { File(dir, "crops").apply { mkdirs() }.resolve("dish%d_t%.1f.jpg".format(req.baseId, req.t)).writeBytes(j) } }
             if (chk == null) return@CheckRunner done(null)
             checks.execute {
                 val res = try { chk.check(req) } catch (e: Exception) {
@@ -250,6 +259,10 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
             codeReader?.offer(c, s.t, s.dets) { bm ?: viewBitmap(s).also { bm = it } }
             engine.onFrame(Frame(c.name, s.t, s.dets, o, crop, codes))
             lastT = maxOf(lastT, s.t)
+            if (cfg.snapshotS > 0 && s.t - (lastSnap[c.name] ?: Double.NEGATIVE_INFINITY) >= cfg.snapshotS) {
+                lastSnap[c.name] = s.t
+                snapshot(c.name, s.t, bm ?: viewBitmap(s).also { bm = it })
+            }
             if (cfg.saveDets) detsFile.appendText(Event.toEl(mapOf("cam" to c.name, "t" to s.t,
                 "dets" to s.dets.map { listOf(it.cls, it.conf) + it.box.toList() }, "occ" to o)).toString() + "\n")
             synchronized(inferMs) { inferMs += s.inferMs; engineMs += (SystemClock.elapsedRealtimeNanos() - a) / 1e6 }
@@ -265,6 +278,13 @@ class Session(private val ctx: Context, val cfg: RunCfg) {
         } finally {
             s.cam.give(s)
         }
+    }
+
+    /** A still of the camera (long side 640, JPEG 70: about 40 KB) for looking at a run afterwards. */
+    private fun snapshot(cam: String, t: Double, view: Bitmap) {
+        val k = minOf(1.0, 640.0 / maxOf(view.width, view.height))
+        val small = Bitmap.createScaledBitmap(view, (view.width * k).toInt(), (view.height * k).toInt(), true)
+        File(dir, "frames/$cam").apply { mkdirs() }.resolve("%07.1f.jpg".format(t)).outputStream().use { small.compress(Bitmap.CompressFormat.JPEG, 70, it) }
     }
 
     private fun onEnded() {

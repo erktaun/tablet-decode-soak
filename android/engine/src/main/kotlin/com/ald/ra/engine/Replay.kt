@@ -26,6 +26,8 @@ import javax.imageio.ImageWriteParam
  * goes to referee_calls.jsonl with its images in referee/.
  * `--params '{"checkEveryS":10}'` overrides site params.
  * Several cameras: each needs a `crop` of the recorded video (one wide video played as several cameras).
+ * `--tracks <file.jsonl>` also writes, per frame and camera, the tracker's confirmed tracks for every class (the same
+ * ByteTrack, params and fps as custody), for drawing track ids on the video (tools/render_tracks.py).
  *
  * `--probe-referee '{"camera":"cam0","before":[{"t":212,"boxes":{"A":[x0,y0,x1,y1],"B":[...]}}],
  *                    "after":{"t":253,"boxes":{"1":[...]}}}'` asks the referee about hand-picked frames of `--video`
@@ -78,6 +80,8 @@ fun main(args: Array<String>) {
     val engine = Engine(site, menu, orders, runner, refereeRunner = refRunner, painter = painter)
     val per = json.parseToJsonElement(File(a["detections"] ?: error("--detections <python perception json>")).readText()).jsonObject
     var lastT = 0.0
+    val trackOut = a["tracks"]?.let { File(it).also { f -> f.parentFile?.mkdirs(); f.writeText("") } }
+    val trackers = mutableMapOf<Pair<String, String>, ByteTrack>()
     for (fe in per["frames"]!!.jsonArray) {
         val fo = fe.jsonObject
         val t = fo["t"]!!.jsonPrimitive.double
@@ -91,7 +95,15 @@ fun main(args: Array<String>) {
         for (cam in site.cameras) {
             val crop = video?.let { v -> { box: Box, mask: List<Box> -> cropJpeg(camImage(v.at(t), cam), box, site.params.cropSide, site.params.cropPad, mask) } }
             val zones = site.zones.filter { it.camera == cam.name }.map { it.name }.toSet()
-            engine.onFrame(Frame(cam.name, t, inCamera(dets, cam), occ.filterKeys { it in zones }, crop))
+            val camDets = inCamera(dets, cam)
+            engine.onFrame(Frame(cam.name, t, camDets, occ.filterKeys { it in zones }, crop))
+            if (trackOut != null) {
+                val byCls = (camDets.map { it.cls } + trackers.keys.filter { it.first == cam.name }.map { it.second }).distinct().associateWith { cls ->
+                    trackers.getOrPut(cam.name to cls) { ByteTrack(site.params, cam.fps) }.update(camDets.filter { it.cls == cls }, t)
+                        .map { listOf(it.id.toDouble()) + it.box.toList() }
+                }
+                trackOut.appendText(Event.toEl(mapOf("t" to t, "cam" to cam.name, "tracks" to byCls)).toString() + "\n")
+            }
         }
         lastT = t
     }

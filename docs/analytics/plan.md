@@ -124,6 +124,20 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
     - Needs Xiaomi "USB debugging (Security settings)" on the phone for adb input (also removes the install tap).
   - **Not yet tested:** a live RTSP camera in the app (everything so far ran from recordings), and the Redmi tablet.
 
+- **Day 5 (2026-10-29), hand-over to the CTO.**
+  - **Runbook:** `RUNBOOK.md` (preparation, cameras, setup, test pass, demo, troubleshooting, logs and what to send back).
+  - **Logging for remote fixing** (app 0.4):
+    - every run keeps detections per frame, a still per camera every 2 s and every check image;
+    - `run.json` has the start time, app version and device;
+    - crashes go to `crashes/`;
+    - `tools/pull_report.py` packs runs, sites, crashes, the system log and device details into one file (no API key);
+    - `tools/record_cameras.py` records the RTSP streams on the laptop for exact replays.
+
+    Phone check with 0.4: ALL PASS, 11 MB for the 7-minute pizza run.
+  - **API key field** in the app (main screen → API key); no adb needed.
+  - **For the CTO:** the Redmi rehearsal (first Redmi speed numbers) and the 24 h test (Exp 3).
+  - **In progress:** box tracking and the referee on the CTO's two test videos (IMG_2494/2495). First pass with minimal references was poor (32 ids for ~8 closed boxes, small far boxes missed); being redone with proper references and a region of interest (`tools/detect_video.py`, `tools/render_tracks.py`, replay `--tracks`).
+
 ## Risks
 - **Closed-box detection on the client's boxes** (the pizza clip never detected them). We only find out from recording R1.
 - **Redmi detector speed:** Exp 2 hasn't been run. The plan assumes about 30 inferences/s at 640.

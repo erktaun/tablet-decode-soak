@@ -1,5 +1,10 @@
 # Tablet decode soak test and detector benchmark (Experiments 0, 1 and 2)
 
+> **Restaurant analytics demo (Experiment 3):** the app in `android/analytics` (dish ingredient checks, boxes followed
+> across cameras, order shown at checkout). To set it up and run a demo, start with
+> **[docs/analytics/RUNBOOK.md](docs/analytics/RUNBOOK.md)**. Design: [spec](docs/analytics/spec.md), status: [plan](docs/analytics/plan.md).
+> The APK is attached to the `analytics-v0.4` release.
+
 Can one budget Android tablet decode several store cameras at once, all day, without overheating or
 dropping frames? How much CPU does that leave, and how fast does a detector run in it?
 

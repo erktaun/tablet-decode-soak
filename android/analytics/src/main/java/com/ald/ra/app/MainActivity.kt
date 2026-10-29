@@ -68,7 +68,8 @@ class MainActivity : Activity() {
         val stop = btn("Stop") { startForegroundService(Intent(this@MainActivity, AnalyticsService::class.java).putExtra("mode", "stop")) }
         val setup = btn("Setup") { startActivity(Intent(this, SetupActivity::class.java).putExtra("site", siteName)) }
         val order = btn("New order") { newOrder() }
-        val top = LinearLayout(this).apply { listOf(siteBtn, setup, start, stop, order).forEach { addView(it) }
+        val key = btn("API key") { apiKey() }
+        val top = LinearLayout(this).apply { listOf(siteBtn, setup, start, stop, order, key).forEach { addView(it) }
             addView(status, LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)) }
         cams = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         orders = text(15f)
@@ -115,6 +116,26 @@ class MainActivity : Activity() {
         }.show()
     }
 
+    /**
+     * The Decisions API key, kept in the app's private storage (files/openai.key): never in the site pack, the logs or
+     * the report. Takes effect at the next Start.
+     */
+    private fun apiKey() {
+        val f = java.io.File(filesDir, "openai.key")
+        val field = EditText(this).apply {
+            hint = if (f.exists()) "a key is set; paste a new one to replace it" else "paste the key (sk-…)"
+            isSingleLine = true; imeOptions = noFullscreenIme
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        AlertDialog.Builder(this).setTitle("Decisions API key").setView(field).setPositiveButton("Save") { _, _ ->
+            val k = field.text.toString().trim()
+            if (k.isEmpty()) return@setPositiveButton
+            f.writeText(k)
+            Toast.makeText(this, "key saved; it is used from the next Start", Toast.LENGTH_LONG).show()
+        }.setNeutralButton("Remove") { _, _ -> f.delete(); Toast.makeText(this, "key removed: checks are off", Toast.LENGTH_LONG).show() }
+            .setNegativeButton("Cancel", null).show()
+    }
+
     /** Type an order (spec §1.5): an id and one or more recipes, each with optional modifiers ("no basil, +olives"). */
     private fun newOrder() {
         val s = AnalyticsService.current?.takeIf { it.state == "running" }
@@ -145,7 +166,11 @@ class MainActivity : Activity() {
 
     private fun refresh() {
         val s = AnalyticsService.current
-        if (s == null) { status.text = "idle — no run"; return }
+        if (s == null) {
+            status.text = "idle — no run · app ${packageManager.getPackageInfo(packageName, 0).versionName} · API key " +
+                if (java.io.File(filesDir, "openai.key").exists()) "set" else "NOT SET (checks off)"
+            return
+        }
         status.text = "${s.cfg.site} · ${s.cfg.runId}\n${s.statusText.ifEmpty { s.state }}"
         for ((name, bm) in s.previews) {
             val v = views.getOrPut(name) {
