@@ -14,3 +14,7 @@ models/*.tflite
 cache/
 out/
 android/engine/build/
+# Reference frames cut from third-party video stay local
+sites/*/refs/*.png
+sites/*/refs/*.jpg
+sites/*/model*.tflite

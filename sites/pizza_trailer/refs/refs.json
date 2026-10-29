@@ -1,0 +1,7 @@
+{
+  "visual": {
+    "open box": [{"image": "prompt_ref.png", "boxes": [[675, 322, 775, 428], [685, 390, 850, 485]]}],
+    "pizza":    [{"image": "prompt_ref.png", "boxes": [[435, 393, 515, 445]]}]
+  },
+  "text": ["person"]
+}

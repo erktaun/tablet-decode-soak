@@ -18,18 +18,21 @@ fun interface CheckRunner {
     fun submit(req: CheckRequest, done: (CheckResult?) -> Unit)
 }
 
-/** A unit: one dish (later in its container) carrying its order and contents from assembly on. */
+/**
+ * A unit: one dish (later in its container) carrying its order and contents from assembly on. The order assignment
+ * can still change until the unit is packed (see [Engine.assignOrders]).
+ */
 class OrderUnit(
     val id: Int,
-    val orderId: String?,
-    val item: Int?,
-    val recipe: String?,
     val contents: List<String>,
-    val missing: List<String>,
-    val extra: List<String>,
     var zone: String,
     var leftT: Double,
 ) {
+    var orderId: String? = null
+    var item: Int? = null
+    var recipe: String? = null
+    var missing: List<String> = emptyList()
+    var extra: List<String> = emptyList()
     var packedT: Double? = null
     var atCheckout = false
     var handedOver = false
@@ -53,8 +56,6 @@ class Engine(
     private val ignores = site.cameras.associate { c -> c.name to c.ignore.map { Poly(it) } }
 
     val units = mutableListOf<OrderUnit>()
-    /** Order id -> filled item indexes. */
-    val filled = mutableMapOf<String, MutableSet<Int>>()
 
     private val assembly = site.zones.filter { it.role == Role.ASSEMBLY }.map { AssemblyStation(this, it) }
     private val packing = site.zones.filter { it.role == Role.PACKING }.map { PackingStation(this, it) }
@@ -124,21 +125,51 @@ class Engine(
     }
 
     /**
-     * Match a finished dish to the best open order item: score = matching ingredients - extra ingredients;
-     * ties go to the oldest order, then the first item. Returns (order, item index) or null if no order is open.
+     * Assign finished dishes to order items (spec §3.7): every unpacked unit is (re)matched together with the new one,
+     * trying every pairing, to maximise the total score (matching ingredients - extra ingredients). Ties go to older
+     * orders, then earlier items. Packed units keep their order. Emits the new unit's verdict, and a
+     * `dish_reassigned` event for any earlier unit whose order changed.
      */
-    fun matchOrder(found: Set<String>): Pair<Order, Int>? {
-        var best: Triple<Order, Int, Int>? = null
-        for (o in orders) {
-            val f = filled[o.id].orEmpty()
-            o.items.forEachIndexed { i, it ->
-                if (i in f) return@forEachIndexed
-                val exp = expected(it).toSet()
-                val score = (exp intersect found).size - (found - exp).size
-                if (best == null || score > best!!.third) best = Triple(o, i, score)
-            }
+    fun assignOrders(newUnit: OrderUnit, t: Double, known: Double) {
+        val fixed = units.filter { it.packedT != null && it.orderId != null }.map { it.orderId to it.item }.toSet()
+        val slots = orders.flatMapIndexed { oi, o -> o.items.indices.map { i -> Triple(oi, o, i) } }
+            .filter { (_, o, i) -> (o.id to i) !in fixed }
+        val free = units.filter { it.packedT == null && !it.handedOver }
+        val score = { u: OrderUnit, s: Triple<Int, Order, Int> ->
+            val exp = expected(s.second.items[s.third]).toSet(); val f = u.contents.toSet()
+            (exp intersect f).size - (f - exp).size
         }
-        return best?.let { it.first to it.second }
+        // Exhaustive search over injective unit -> slot maps (a unit may also get no slot when slots run out).
+        var best: List<Int>? = null
+        var bestKey = Pair(Int.MIN_VALUE, Int.MAX_VALUE)
+        fun rec(k: Int, used: BooleanArray, cur: IntArray, sc: Int, age: Int) {
+            if (k == free.size) {
+                if (sc > bestKey.first || (sc == bestKey.first && age < bestKey.second)) { bestKey = sc to age; best = cur.toList() }
+                return
+            }
+            var any = false
+            for (j in slots.indices) if (!used[j]) {
+                any = true
+                used[j] = true; cur[k] = j
+                rec(k + 1, used, cur, sc + score(free[k], slots[j]), age + slots[j].first * 100 + slots[j].third)
+                used[j] = false
+            }
+            if (!any) { cur[k] = -1; rec(k + 1, used, cur, sc, age) }
+        }
+        if (free.size <= 6 && slots.size <= 12) rec(0, BooleanArray(slots.size), IntArray(free.size), 0, 0)
+        else best = free.map { u -> slots.indices.maxByOrNull { score(u, slots[it]) } ?: -1 }  // too big: greedy
+        for ((k, u) in free.withIndex()) {
+            val j = best!![k]
+            val s = slots.getOrNull(j)
+            val (oid, item) = (s?.second?.id) to s?.third
+            val changed = u !== newUnit && (oid != u.orderId || item != u.item)
+            val exp = s?.let { expected(it.second.items[it.third]) }.orEmpty()
+            u.orderId = oid; u.item = item; u.recipe = s?.let { it.second.items[it.third].recipe }
+            u.missing = exp.filter { it !in u.contents }; u.extra = u.contents.filter { it !in exp }
+            if (u === newUnit || changed)
+                log.add(t, if (u === newUnit) "dish_verdict" else "dish_reassigned", known, "dish" to u.id, "order" to oid,
+                    "recipe" to u.recipe, "found" to u.contents.sorted(), "missing" to u.missing, "extra" to u.extra)
+        }
     }
 
     /** Units that left an earlier zone and could arrive in `zone` at time t (oldest first). */
@@ -246,21 +277,14 @@ class AssemblyStation(private val e: Engine, val zone: Zone) {
         }
     }
 
-    /** The dish is finished: match it to an order, give the verdict, and hand it on as a unit. */
+    /** The dish is finished: hand it on as a unit and match it to an order (with every other unpacked dish). */
     fun done(b: Base, t: Double) {
         b.done = true
-        val found = b.confirmed.keys
-        val m = e.matchOrder(found)
         val known = maxOf(t, b.confirmed.values.maxOrNull() ?: 0.0)
         e.log.add(b.last, "dish_done", known, "dish" to b.id, "zone" to zone.name, "moved_at" to b.links)
-        val exp = m?.let { e.expected(it.first.items[it.second]) }.orEmpty()
-        val missing = exp.filter { it !in found }
-        val extra = found.filter { it !in exp }
-        if (m != null) e.filled.getOrPut(m.first.id) { mutableSetOf() } += m.second
-        e.log.add(b.last, "dish_verdict", known, "dish" to b.id, "order" to m?.first?.id,
-            "recipe" to m?.let { it.first.items[it.second].recipe }, "found" to found.sorted(), "missing" to missing, "extra" to extra)
-        e.units += OrderUnit(b.id!!, m?.first?.id, m?.second, m?.let { it.first.items[it.second].recipe }, found.sorted(), missing, extra,
-            zone.name, b.last)
+        val u = OrderUnit(b.id!!, b.confirmed.keys.sorted(), zone.name, b.last)
+        e.units += u
+        e.assignOrders(u, b.last, known)
     }
 
     fun finish(t: Double) {

@@ -55,3 +55,51 @@ class PizzaParityTest {
         assertTrue(ev.none { "order_uncertain" in it })
     }
 }
+
+/** Small sites built in code, for scenario tests. */
+object Fixtures {
+    val menu = Menu(
+        listOf(Ingredient("tomato sauce", "red sauce"), Ingredient("mozzarella", "white cheese"), Ingredient("cooked ham", "pink slices")),
+        listOf(Recipe("Prosciutto cotto", listOf("tomato sauce", "mozzarella", "cooked ham")),
+            Recipe("Margherita", listOf("tomato sauce", "mozzarella"))))
+
+    fun site(vararg zones: Zone, flow: List<String> = zones.filter { it.role != Role.CUSTOMER }.map { it.name },
+             closed: List<String> = emptyList(), cams: List<String> = listOf("cam0")) = Site(
+        site = "test", cameras = cams.map { Camera(it, "file:none", 1280, 720) }, zones = zones.toList(), flow = flow,
+        classes = Classes(base = listOf("pizza"), openContainer = listOf("open box"), closedContainer = closed))
+
+    val noChecks = CheckRunner { _, done -> done(null) }
+}
+
+class OrderMatchingTest {
+    @Test
+    fun `a later dish can fix an earlier tie`() {
+        // Dish 1 (margherita) finishes first: it ties between both recipes and takes the first item (Prosciutto).
+        // Dish 2 (with ham) then only fits Prosciutto, so the exhaustive match moves dish 1 to Margherita.
+        val e = Engine(Fixtures.site(Zone("a", "cam0", Role.ASSEMBLY)), Fixtures.menu,
+            listOf(Order("A-1", listOf(OrderItem("Prosciutto cotto"), OrderItem("Margherita")))), Fixtures.noChecks)
+        val d1 = OrderUnit(1, listOf("mozzarella", "tomato sauce"), "a", 10.0).also { e.units += it }
+        e.assignOrders(d1, 10.0, 10.0)
+        assertEquals("Prosciutto cotto", d1.recipe)
+        val d2 = OrderUnit(2, listOf("cooked ham", "mozzarella", "tomato sauce"), "a", 20.0).also { e.units += it }
+        e.assignOrders(d2, 20.0, 20.0)
+        assertEquals("Margherita", d1.recipe)
+        assertEquals("Prosciutto cotto", d2.recipe)
+        assertTrue(e.log.events.any { it.kind == "dish_reassigned" && it.data["dish"] == 1 })
+        assertEquals(emptyList(), d1.missing + d1.extra + d2.missing + d2.extra)
+    }
+
+    @Test
+    fun `a packed dish keeps its order`() {
+        val e = Engine(Fixtures.site(Zone("a", "cam0", Role.ASSEMBLY)), Fixtures.menu,
+            listOf(Order("A-1", listOf(OrderItem("Prosciutto cotto"), OrderItem("Margherita")))), Fixtures.noChecks)
+        val d1 = OrderUnit(1, listOf("mozzarella", "tomato sauce"), "a", 10.0).also { e.units += it }
+        e.assignOrders(d1, 10.0, 10.0)
+        d1.packedT = 15.0
+        val d2 = OrderUnit(2, listOf("cooked ham", "mozzarella", "tomato sauce"), "a", 20.0).also { e.units += it }
+        e.assignOrders(d2, 20.0, 20.0)
+        assertEquals("Prosciutto cotto", d1.recipe)  // already in its box: not moved
+        assertEquals("Margherita", d2.recipe)
+        assertEquals(listOf("cooked ham"), d2.extra)
+    }
+}
