@@ -33,8 +33,10 @@ data class Camera(
     val ignore: List<List<List<Double>>> = emptyList(),
     /** Shared map, counter surface: 4+ image points on the counter and the same points on the floor plan (metres). */
     val map: MapPoints? = null,
-    /** Optional shared map for the floor (people's feet). Without it people are matched in the image only. */
+    /** Optional shared map for the floor (people's feet). Not used yet: people are matched in the image only (spec §4.3). */
     val floor: MapPoints? = null,
+    /** Replays and demos only: this camera is the crop [x0, y0, x1, y1] of a wider source video (one video as several cameras). */
+    val crop: List<Double>? = null,
 )
 
 @Serializable
@@ -135,6 +137,12 @@ data class Params(
     val mapTolS: Double = 1.0,
     /** Track history kept for matching a box to where a unit was when it went missing. */
     val historyS: Double = 10.0,
+    /** Track referee (spec §4.5): off until it beats "uncertain" on a staged swap clip. */
+    val referee: Boolean = false,
+    /** The referee's best assignment must beat the next best by this much (sum of probabilities). */
+    val refereeMargin: Double = 0.3,
+    /** Two bound boxes this close (centre distance, in box sizes) with one person touching both may have swapped tracks. */
+    val refereeClose: Double = 0.8,
 )
 
 @Serializable

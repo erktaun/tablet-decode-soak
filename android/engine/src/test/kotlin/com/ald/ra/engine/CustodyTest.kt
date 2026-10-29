@@ -51,39 +51,11 @@ class Scene {
     }
 }
 
+fun Engine.unit(order: String) = units.first { it.orderId == order }
+fun Engine.kinds() = log.events.map { it.kind }
+fun near(b: Box?, x: Double, y: Double) = b != null && kotlin.math.hypot(b.x0 - x, b.y0 - y) < 15
+
 class CustodyTest {
-    private fun site(maps: Boolean = false, customer: Boolean = true): Site {
-        val m0 = MapPoints(listOf(listOf(0.0, 0.0), listOf(1280.0, 0.0), listOf(1280.0, 720.0), listOf(0.0, 720.0)),
-            listOf(listOf(0.0, 0.0), listOf(4.0, 0.0), listOf(4.0, 2.25), listOf(0.0, 2.25)))
-        val m1 = MapPoints(m0.image, listOf(listOf(3.0, 0.0), listOf(7.0, 0.0), listOf(7.0, 2.25), listOf(3.0, 2.25)))
-        val zones = mutableListOf(
-            Zone("pack", "cam0", Role.PACKING, listOf(listOf(0.0, 0.0), listOf(500.0, 0.0), listOf(500.0, 720.0), listOf(0.0, 720.0))),
-            Zone("shelf", "cam0", Role.HOLD, listOf(listOf(500.0, 0.0), listOf(1280.0, 0.0), listOf(1280.0, 720.0), listOf(500.0, 720.0))),
-            Zone("out", "cam1", Role.CHECKOUT, null))
-        if (customer) zones += Zone("cust", "cam1", Role.CUSTOMER,
-            listOf(listOf(0.0, 600.0), listOf(1280.0, 600.0), listOf(1280.0, 720.0), listOf(0.0, 720.0)), forZone = "out")
-        return Site(site = "custody", zones = zones, flow = listOf("pack", "shelf", "out"),
-            cameras = listOf(Camera("cam0", "file:none", 1280, 720, 5.0, map = if (maps) m0 else null),
-                Camera("cam1", "file:none", 1280, 720, 5.0, map = if (maps) m1 else null)),
-            links = listOf(Link("shelf", "out", listOf(0.0, 30.0)), Link("pack", "out", listOf(0.0, 30.0))),
-            classes = Classes(base = listOf("pizza"), closedContainer = listOf("box")))
-    }
-
-    /** An engine with one packed unit per order, waiting where its box is at t = 0. */
-    private fun engine(site: Site, vararg units: Pair<String, Box>): Engine {
-        val orders = units.map { Order(it.first, listOf(OrderItem("Margherita"))) }
-        val e = Engine(site, Fixtures.menu, orders, Fixtures.noChecks)
-        units.forEachIndexed { i, (oid, b) ->
-            e.units += OrderUnit(i + 1, listOf("mozzarella", "tomato sauce"), "pack", 0.0).apply {
-                orderId = oid; item = 0; recipe = "Margherita"; packedT = 0.0; pending("cam0", b, 0.0)
-            }
-        }
-        return e
-    }
-
-    private fun Engine.unit(order: String) = units.first { it.orderId == order }
-    private fun Engine.kinds() = log.events.map { it.kind }
-    private fun near(b: Box?, x: Double, y: Double) = b != null && kotlin.math.hypot(b.x0 - x, b.y0 - y) < 15
 
     @Test
     fun `person walks in front of a still box - parked, same unit`() {
@@ -213,5 +185,36 @@ class CustodyTest {
         assertTrue(a.atCheckout && a.candidates.isEmpty())
         assertTrue(e.log.events.any { it.kind == "unit_seen" && it.data["how"] == "map" }, e.kinds().toString())
         assertTrue("unknown_box" !in e.kinds())
+    }
+
+    companion object {
+        fun site(maps: Boolean = false, customer: Boolean = true): Site {
+            val m0 = MapPoints(listOf(listOf(0.0, 0.0), listOf(1280.0, 0.0), listOf(1280.0, 720.0), listOf(0.0, 720.0)),
+                listOf(listOf(0.0, 0.0), listOf(4.0, 0.0), listOf(4.0, 2.25), listOf(0.0, 2.25)))
+            val m1 = MapPoints(m0.image, listOf(listOf(3.0, 0.0), listOf(7.0, 0.0), listOf(7.0, 2.25), listOf(3.0, 2.25)))
+            val zones = mutableListOf(
+                Zone("pack", "cam0", Role.PACKING, listOf(listOf(0.0, 0.0), listOf(500.0, 0.0), listOf(500.0, 720.0), listOf(0.0, 720.0))),
+                Zone("shelf", "cam0", Role.HOLD, listOf(listOf(500.0, 0.0), listOf(1280.0, 0.0), listOf(1280.0, 720.0), listOf(500.0, 720.0))),
+                Zone("out", "cam1", Role.CHECKOUT, null))
+            if (customer) zones += Zone("cust", "cam1", Role.CUSTOMER,
+                listOf(listOf(0.0, 600.0), listOf(1280.0, 600.0), listOf(1280.0, 720.0), listOf(0.0, 720.0)), forZone = "out")
+            return Site(site = "custody", zones = zones, flow = listOf("pack", "shelf", "out"),
+                cameras = listOf(Camera("cam0", "file:none", 1280, 720, 5.0, map = if (maps) m0 else null),
+                    Camera("cam1", "file:none", 1280, 720, 5.0, map = if (maps) m1 else null)),
+                links = listOf(Link("shelf", "out", listOf(0.0, 30.0)), Link("pack", "out", listOf(0.0, 30.0))),
+                classes = Classes(base = listOf("pizza"), closedContainer = listOf("box")))
+        }
+
+        /** An engine with one packed unit per order, waiting where its box is at t = 0. */
+        fun engine(site: Site, vararg units: Pair<String, Box>, referee: RefereeRunner? = null, painter: Painter? = null): Engine {
+            val orders = units.map { Order(it.first, listOf(OrderItem("Margherita"))) }
+            val e = Engine(site, Fixtures.menu, orders, Fixtures.noChecks, refereeRunner = referee, painter = painter)
+            units.forEachIndexed { i, (oid, b) ->
+                e.units += OrderUnit(i + 1, listOf("mozzarella", "tomato sauce"), "pack", 0.0).apply {
+                    orderId = oid; item = 0; recipe = "Margherita"; packedT = 0.0; pending("cam0", b, 0.0)
+                }
+            }
+            return e
+        }
     }
 }

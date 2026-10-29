@@ -42,7 +42,7 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
 3. **Custody state machine** (§4.2): parked, carried by person X, put down at Q, in transit, uncertain {candidates}.
 4. **Transit** (§4.3): travel window + container type + oldest first; uncertain when there are several candidates.
 5. **Overlap without the map:** a box seen in both cameras at the same moment is the same unit.
-6. **Shared map:** homography from 4+ points per camera (DLT, plain Kotlin). **Open question:** one homography covers one flat surface only, so the counter (boxes) and the floor (people) each need their own; carried boxes are off both. Proposal: a counter homography plus an optional floor homography, and matching across cameras by a distance tolerance (about 0.5 m) plus time.
+6. **Shared map:** homography from 4+ points per camera (DLT, plain Kotlin). **Decided:** one counter-height homography per camera (boxes sit on counters). Floor homography for people is left out until needed. Matching across cameras by a distance tolerance (0.5 m) plus time (1 s).
 7. **Referee, off by default** (§4.5): triggers, labelled frames (drawn with java.awt on the laptop; Android Canvas on day 3), pairwise questions, margin 0.3, `referee_calls.jsonl`.
 8. **Identifier hook:** a code read on a container overrides everything else.
 9. **Tests:** unit tests per swap scenario (spec §4.4 table); synthetic multi-camera run from pizza-clip crops.
@@ -72,7 +72,19 @@ tools/                 make_site_model.py (refs -> model.tflite), check_device.p
   - **Model export verified.** YOLOE with the pizza clip's visual-prompt classes exports to TFLite (`tools/make_site_model.py`, 40.6 MB) and reproduces 100% of PyTorch's boxes on 20 frames (open box 56/56, pizza 37/37, person 31/31).
   - **Order matching over every pairing.** `dish_reassigned` when a later dish fixes an earlier tie. Two unit tests.
   - **Custody done and tested** (`Custody.kt`: parked, carried, transit, shared map, QR override, checkout hand-over). `CustodyTest` has 8 scripted scenes, one per row of the spec §4.4 table. All pass; disabling the carried rule makes 3 of them fail.
-  - **Day 2 still to do:** referee (off by default), and the synthetic multi-camera run from pizza-clip crops.
+  - **Shared map decided:** one counter-height homography per camera; no floor homography until a recording needs it (spec §4.3).
+  - **Referee built, off by default** (`Referee.kt`, spec §4.5).
+    - Triggers: "uncertain" binding and "crossed" boxes.
+    - The engine decides what to draw and applies the answer; the host draws (`Painter`) and calls (`RefereeRunner`), so the same code runs on Android.
+    - The Decisions client is shared with the ingredient checker; cache keys are unchanged.
+    - 5 tests (`RefereeTest`): fixes the out-of-view swap whether the answer comes before or after the second box; stays uncertain when it can't tell; off by default; corrects crossed tracks; pairing enumeration.
+    - Live probe: the multi-image request works (3.8 s, $0.00015); it told two pizzas apart by toppings. Identical boxes still need R3.
+  - **Synthetic two-camera run done.**
+    - `sites/pizza_trailer_2cam`: the clip as two cropped cameras (make line + oven | boxing + pass + customer), linked by a travel window. Cameras take a `crop` field (replays and demos: one video as several cameras).
+    - Golden test: the same events as one camera with recorded answers.
+    - Live API run: all correct, 108 checks, $0.014.
+    - This clip has no closed boxes, so custody across cameras is covered by the scripted tests only, until the CTO's recordings.
+  - **Day 2 done.** Tests: 20, all green.
   - **640 px finding.** The tablet runs the detector at 640; the Python demo ran at 1280. On this wide clip (pizza about 80 px) a full-frame 640 input breaks the make line and loses the customer. Two changes:
     - The detector runs on a **region of interest = the union of the camera's zones** (app default, to build on day 3; tested in Python with `roi` in the scene config).
     - Rules that don't depend on resolution:

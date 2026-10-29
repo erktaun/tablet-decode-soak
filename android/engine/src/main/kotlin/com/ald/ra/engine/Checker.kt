@@ -1,6 +1,7 @@
 package com.ald.ra.engine
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -32,22 +33,80 @@ interface Checker {
 }
 
 /**
- * OpenAI Decisions API (POST /v1/decisions, gpt-6-luna): one predicate question per menu ingredient, answered with
- * a probability. Same request shape as src/ingtrack/decisions.py. Responses are cached on disk by request hash,
- * so replays cost nothing and are deterministic.
+ * OpenAI Decisions API (POST /v1/decisions, gpt-6-luna): predicate questions about the images in one user message,
+ * each answered with a probability. Responses are cached on disk by request hash, so replays cost nothing and are
+ * deterministic. Shared by the ingredient checker and the track referee.
  */
-class DecisionsChecker(
+class DecisionsClient(
     private val apiKey: String,
-    private val menu: Menu,
-    private val baseName: String,
     private val cacheDir: File?,
-    private val model: String = "gpt-6-luna",
+    val model: String = "gpt-6-luna",
     private val url: String = "https://api.openai.com/v1/decisions",
-    private val pricePerMIn: Double = 0.10,
+    val pricePerMIn: Double = 0.10,
     timeoutS: Long = 30,
-) : Checker {
+) {
     private val http = OkHttpClient.Builder().callTimeout(timeoutS, TimeUnit.SECONDS).build()
 
+    /**
+     * Ask `questions` about `content` (text and image parts, see [text] and [image]). `key` identifies the request
+     * besides the images. `record` turns the raw response and its latency into what gets cached and returned.
+     * Returns (record, cached).
+     */
+    fun ask(key: List<JsonElement>, content: JsonArray, questions: JsonArray, images: List<ByteArray>,
+            record: (JsonObject, Double) -> JsonObject): Pair<JsonObject, Boolean> {
+        val h = sha(JsonArray(listOf<JsonElement>(JsonPrimitive(model)) + key + listOf<JsonElement>(questions)).toString().toByteArray() +
+            images.fold(ByteArray(0)) { a, b -> a + b })
+        val cf = cacheDir?.let { File(it, "$h.json") }
+        if (cf != null && cf.exists()) return json.parseToJsonElement(cf.readText()).jsonObject to true
+        val body = buildJsonObject {
+            put("model", model)
+            put("input", buildJsonArray { add(buildJsonObject { put("role", "user"); put("content", content) }) })
+            put("questions", questions)
+        }
+        val t0 = System.nanoTime()
+        val resp = http.newCall(Request.Builder().url(url).header("Authorization", "Bearer $apiKey")
+            .post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute()
+        val lat = (System.nanoTime() - t0) / 1e9
+        resp.use {
+            if (!it.isSuccessful) throw RuntimeException("Decisions API ${it.code}: ${it.body?.string()?.take(300)}")
+            val rec = record(json.parseToJsonElement(it.body!!.string()).jsonObject, Math.round(lat * 1000) / 1000.0)
+            cf?.let { f -> f.parentFile.mkdirs(); f.writeText(rec.toString()) }
+            return rec to false
+        }
+    }
+
+    fun cost(tokensIn: Int) = tokensIn * pricePerMIn / 1e6
+
+    companion object {
+        fun text(s: String) = buildJsonObject { put("type", "input_text"); put("text", s) }
+        fun image(jpeg: ByteArray) = buildJsonObject {
+            put("type", "input_image")
+            put("image_url", "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(jpeg))
+        }
+        fun predicate(name: String, instructions: String) = buildJsonObject {
+            put("name", name); put("type", "predicate"); put("instructions", instructions)
+        }
+        /** Answers by question name, plus input tokens and latency: the cached record format. */
+        fun answers(resp: JsonObject, lat: Double, rename: (String) -> String = { it }) = buildJsonObject {
+            put("probs", buildJsonObject {
+                for (a in resp["answers"]!!.jsonArray) {
+                    val o = a.jsonObject
+                    put(rename(o["name"]!!.jsonPrimitive.content), o["probability"]!!.jsonPrimitive.double)
+                }
+            })
+            put("tokens_in", resp["usage"]!!.jsonObject["input_tokens"]!!.jsonPrimitive.int)
+            put("latency_s", lat)
+        }
+        private fun sha(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }.take(24)
+    }
+}
+
+/** Ingredient checks on the Decisions API: one predicate question per menu ingredient (same as src/ingtrack/decisions.py). */
+class DecisionsChecker(
+    private val client: DecisionsClient,
+    private val menu: Menu,
+    private val baseName: String,
+) : Checker {
     val context = "Overhead camera crop of one $baseName being assembled in a restaurant kitchen. Judge only the " +
         "$baseName in the centre of the image; grey areas are masked out. Hands, arms, gloves and utensils are not " +
         "ingredients. Small, low-resolution image: only answer yes for ingredients you can clearly identify."
@@ -55,66 +114,22 @@ class DecisionsChecker(
     private fun qName(name: String) = name.replace(Regex("[^A-Za-z0-9]+"), "_")
 
     fun questions() = buildJsonArray {
-        for (ing in menu.ingredients) add(buildJsonObject {
-            put("name", qName(ing.name))
-            put("type", "predicate")
+        for (ing in menu.ingredients) {
             val not = ing.confusableWith?.let { " Not $it." } ?: ""
-            put("instructions", "${ing.name} (${ing.look}) is visibly on the $baseName right now.$not")
-        })
+            add(DecisionsClient.predicate(qName(ing.name), "${ing.name} (${ing.look}) is visibly on the $baseName right now.$not"))
+        }
     }
 
     override fun check(req: CheckRequest): CheckResult? {
         val jpeg = req.jpeg ?: return null
-        val qs = questions()
-        val body = buildJsonObject {
-            put("model", model)
-            put("input", buildJsonArray {
-                add(buildJsonObject {
-                    put("role", "user")
-                    put("content", buildJsonArray {
-                        add(buildJsonObject { put("type", "input_text"); put("text", context) })
-                        add(buildJsonObject {
-                            put("type", "input_image")
-                            put("image_url", "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(jpeg))
-                        })
-                    })
-                })
-            })
-            put("questions", qs)
-        }
-        val key = sha(JsonArray(listOf(JsonPrimitive(model), JsonPrimitive(context), qs)).toString().toByteArray() + jpeg)
-        val cf = cacheDir?.let { File(it, "$key.json") }
-        if (cf != null && cf.exists()) return parse(json.parseToJsonElement(cf.readText()).jsonObject, cached = true)
-        val t0 = System.nanoTime()
-        val resp = http.newCall(Request.Builder().url(url).header("Authorization", "Bearer $apiKey")
-            .post(body.toString().toRequestBody("application/json".toMediaType())).build()).execute()
-        val lat = (System.nanoTime() - t0) / 1e9
-        resp.use {
-            if (!it.isSuccessful) throw RuntimeException("Decisions API ${it.code}: ${it.body?.string()?.take(300)}")
-            val j = json.parseToJsonElement(it.body!!.string()).jsonObject
-            val names = menu.ingredients.associateBy({ qName(it.name) }, { it.name })
-            val rec = buildJsonObject {
-                put("probs", buildJsonObject {
-                    for (a in j["answers"]!!.jsonArray) {
-                        val o = a.jsonObject
-                        put(names[o["name"]!!.jsonPrimitive.content] ?: o["name"]!!.jsonPrimitive.content, o["probability"]!!.jsonPrimitive.double)
-                    }
-                })
-                put("tokens_in", j["usage"]!!.jsonObject["input_tokens"]!!.jsonPrimitive.int)
-                put("latency_s", Math.round(lat * 1000) / 1000.0)
-            }
-            cf?.let { f -> f.parentFile.mkdirs(); f.writeText(rec.toString()) }
-            return parse(rec, cached = false)
-        }
-    }
-
-    private fun parse(o: JsonObject, cached: Boolean): CheckResult {
+        val names = menu.ingredients.associateBy({ qName(it.name) }, { it.name })
+        val (o, cached) = client.ask(listOf(JsonPrimitive(context)),
+            buildJsonArray { add(DecisionsClient.text(context)); add(DecisionsClient.image(jpeg)) }, questions(), listOf(jpeg)
+        ) { resp, lat -> DecisionsClient.answers(resp, lat) { names[it] ?: it } }
         val tokens = o["tokens_in"]!!.jsonPrimitive.int
         return CheckResult(o["probs"]!!.jsonObject.mapValues { it.value.jsonPrimitive.double },
-            o["latency_s"]!!.jsonPrimitive.double, tokens, tokens * pricePerMIn / 1e6, cached)
+            o["latency_s"]!!.jsonPrimitive.double, tokens, client.cost(tokens), cached)
     }
-
-    private fun sha(b: ByteArray) = MessageDigest.getInstance("SHA-256").digest(b).joinToString("") { "%02x".format(it) }.take(24)
 }
 
 /**

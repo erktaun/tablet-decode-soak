@@ -41,9 +41,15 @@ class PizzaParityTest {
     private val res = File("src/test/resources/pizza_trailer")
 
     @Test
-    fun `pizza trailer matches python`() {
-        val out = File(repo, "out/test_parity")
-        main(arrayOf("--site", File(repo, "sites/pizza_trailer").path, "--detections", File(res, "detections.json").path,
+    fun `pizza trailer matches python`() = expectPythonEvents("pizza_trailer")
+
+    /** The same clip played as two cameras (sites/pizza_trailer_2cam): the dish crosses from camA to camB. */
+    @Test
+    fun `pizza trailer as two cameras gives the same events`() = expectPythonEvents("pizza_trailer_2cam")
+
+    private fun expectPythonEvents(site: String) {
+        val out = File(repo, "out/test_$site")
+        main(arrayOf("--site", File(repo, "sites/$site").path, "--detections", File(res, "detections.json").path,
             "--checker", "recorded:${File(res, "decision_calls.jsonl").path}", "--out", out.path,
             "--params", PYTHON_PARAMS))
         val ev = File(out, "events.jsonl").readLines()

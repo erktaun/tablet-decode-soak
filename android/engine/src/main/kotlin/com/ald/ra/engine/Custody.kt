@@ -31,8 +31,14 @@ class Custody(private val e: Engine) {
     private val announced = mutableSetOf<Pair<String, Int>>()
     private val unknownCodes = mutableSetOf<String>()
 
-    /** Called when a unit is bound with several candidates (the referee's trigger). */
+    private val firstSeen = mutableMapOf<Pair<String, Int>, Double>()
+    private val apart = mutableMapOf<Triple<String, Int, Int>, Double>()
+    private val crossing = mutableSetOf<Triple<String, Int, Int>>()
+
+    /** Called when a unit is bound with several candidates, before the unit is updated (the referee's trigger). */
     var onUncertain: ((unit: OrderUnit, candidates: List<OrderUnit>, camera: String, track: TrackOut, t: Double) -> Unit)? = null
+    /** Called when two bound boxes separate after being close under one person (the referee's other trigger). */
+    var onCrossed: ((camera: String, a: Int, ua: OrderUnit, b: Int, ub: OrderUnit, apartT: Double, t: Double) -> Unit)? = null
 
     fun active() = boxCls.isNotEmpty()
 
@@ -45,12 +51,15 @@ class Custody(private val e: Engine) {
         for (tr in bt) history.getOrPut(c to tr.id) { ArrayDeque() }.apply {
             addLast(t to tr.box); while (first().first < t - p.historyS) removeFirst()
         }
+        for (tr in bt) firstSeen.getOrPut(c to tr.id) { t - tr.ageS }
         for (pp in pt) personLast[c to pp.id] = t to pp.box
         history.entries.removeAll { it.key.first == c && it.value.last().first < t - p.historyS }
+        firstSeen.keys.removeAll { it.first == c && it !in history }
         val seenIds = bt.map { it.id }.toSet()
 
         // 1. Bound boxes seen this frame.
-        for (tr in bt) bound[c to tr.id]?.let { seen(it, c, tr, t) }
+        for (tr in bt) bound[c to tr.id]?.let { seen(it, c, tr.box, t) }
+        onCrossed?.let { crossings(c, bt, pt, t, it) }
         // 2. Bound boxes not seen: missing (unless another camera still sees the unit).
         for ((key, u) in bound.entries.filter { it.key.first == c && it.key.second !in seenIds }.map { it.key to it.value }) {
             if (u.state == UState.SURFACE && u.camera == c && !visibleElsewhere(u, c, t)) {
@@ -72,11 +81,11 @@ class Custody(private val e: Engine) {
         }
     }
 
-    private fun seen(u: OrderUnit, c: String, tr: TrackOut, t: Double) {
+    private fun seen(u: OrderUnit, c: String, box: Box, t: Double) {
         if (u.state == UState.HANDED) return
-        u.state = UState.SURFACE; u.camera = c; u.lastBox = tr.box; u.lastSeenT = t; u.coveredBy = null; u.carrier = null
-        maps[c]?.let { m -> u.mapPos = m.map(tr.box.cx, tr.box.cy); u.mapT = t }
-        val z = zoneAt(c, tr.box)
+        u.state = UState.SURFACE; u.camera = c; u.lastBox = box; u.lastSeenT = t; u.coveredBy = null; u.carrier = null
+        maps[c]?.let { m -> u.mapPos = m.map(box.cx, box.cy); u.mapT = t }
+        val z = zoneAt(c, box)
         if (z != null && e.flowIndex(z.name) > e.flowIndex(u.zone)) enter(u, z, t)
     }
 
@@ -172,7 +181,7 @@ class Custody(private val e: Engine) {
                 "travel_s" to t - u.transitT!!)
             how == "map" -> e.log.add(t, "unit_seen", t, "unit" to u.id, "order" to u.orderId, "camera" to c, "how" to "map")
         }
-        seen(u, c, tr, t)
+        seen(u, c, tr.box, t)
     }
 
     /** A code (QR / order label) read on a box: the box belongs to that order, whatever the rules said. */
@@ -185,14 +194,69 @@ class Custody(private val e: Engine) {
             if (unknownCodes.add(code)) e.log.add(t, "unknown_code", t, "code" to code, "camera" to c)
             return
         }
-        // Swap bindings: v takes this box; the unit that had it takes v's old box (if any).
-        val vKey = v.tracks[c]?.let { c to it }
-        if (cur != null && vKey != null) { bound[vKey] = cur; cur.tracks[c] = vKey.second; cur.candidates = listOf(cur.orderId, v.orderId).filterNotNull() }
-        else if (cur != null) { cur.tracks.remove(c); cur.state = UState.MISSING; cur.lostT = t; cur.coveredBy = null }
-        bound[c to tr.id] = v; v.tracks[c] = tr.id; v.candidates = emptyList()
+        reassign(c, mapOf(tr.id to v), t) {}
+        if (cur != null && cur.tracks[c] != null) cur.candidates = listOf(cur.orderId, v.orderId).filterNotNull()
+        v.candidates = emptyList()
         e.log.add(t, "unit_identified", t, "unit" to v.id, "order" to code, "camera" to c, "corrected" to (cur != null),
             "was" to cur?.orderId)
-        seen(v, c, tr, t)
+    }
+
+    /**
+     * Give box tracks to units (track id -> unit) in camera c. The unit that had a track takes the new owner's old
+     * track if it had one in this camera (a swap); otherwise `restore` puts it back to what it was (default: missing
+     * where it was last seen). Returns whether any binding changed.
+     */
+    fun reassign(c: String, assign: Map<Int, OrderUnit>, t: Double, restore: (OrderUnit) -> Unit): Boolean {
+        var changed = false
+        for ((tid, v) in assign) {
+            val cur = bound[c to tid]
+            if (cur === v) continue
+            val box = boxAt(c, tid, t) ?: continue  // the track is gone
+            changed = true
+            val vOld = v.tracks[c]?.takeIf { bound[c to it] === v }
+            if (cur != null && vOld != null) {
+                bound[c to vOld] = cur; cur.tracks[c] = vOld
+                boxAt(c, vOld, t)?.let { seen(cur, c, it, t) }
+            } else if (cur != null) {
+                cur.tracks.remove(c); restore(cur)
+                if (cur.state == UState.SURFACE && cur.camera == c) { cur.state = UState.MISSING; cur.lostT = t; cur.coveredBy = null }
+            }
+            vOld?.takeIf { cur == null }?.let { bound.remove(c to it) }
+            bound[c to tid] = v; v.tracks[c] = tid
+            seen(v, c, box, t)
+        }
+        return changed
+    }
+
+    /** Where track `id` in camera c was at time t (nearest sample within 0.5 s), from the recent history. */
+    fun boxAt(c: String, id: Int, t: Double): Box? =
+        history[c to id]?.minByOrNull { kotlin.math.abs(it.first - t) }?.takeIf { kotlin.math.abs(it.first - t) <= 0.5 }?.second
+
+    /** When track `id` in camera c was first seen (while it's in the recent history). */
+    fun trackStart(c: String, id: Int): Double? = firstSeen[c to id]
+
+    /** Pairs of bound boxes that came close while one person touched both, and have now separated. */
+    private fun crossings(c: String, bt: List<TrackOut>, pt: List<TrackOut>, t: Double,
+                          cb: (String, Int, OrderUnit, Int, OrderUnit, Double, Double) -> Unit) {
+        val bb = bt.filter { (c to it.id) in bound }.sortedBy { it.id }
+        val live = mutableSetOf<Triple<String, Int, Int>>()
+        for (i in bb.indices) for (j in i + 1 until bb.size) {
+            val a = bb[i]; val b = bb[j]
+            val key = Triple(c, a.id, b.id); live += key
+            val d = dist(a.box, b.box) / maxOf(a.box.size, b.box.size)
+            val far = d > 1.5 * p.refereeClose
+            when {
+                key in crossing -> if (far) {
+                    crossing.remove(key)
+                    apart[key]?.let { at -> cb(c, a.id, bound[c to a.id]!!, b.id, bound[c to b.id]!!, at, t) }
+                    apart[key] = t
+                }
+                d <= p.refereeClose && pt.any { touches(it.box, a.box) && touches(it.box, b.box) } -> crossing += key
+                far -> apart[key] = t
+            }
+        }
+        apart.keys.removeAll { it.first == c && it !in live }
+        crossing.removeAll { it.first == c && it !in live }
     }
 
     private fun unknown(c: String, tr: TrackOut, t: Double) {

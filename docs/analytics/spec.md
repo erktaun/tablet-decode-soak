@@ -10,7 +10,7 @@ This is a live demo at a client site with our own cameras. Everything specific t
 ## Decisions taken (2026-10-29)
 - The five roles (`assembly / packing / hold / checkout / customer`) are enough for now.
 - The default done signal is `leaves_zone`.
-- The **shared map is in scope** (§4.3).
+- The **shared map is in scope** (§4.3), with **one counter-height mapping per camera** for boxes. A floor mapping for people is left out until a recording shows it's needed.
 - Cases where boxes are swapped out of sight need an **identifier** (QR code or order label). Without one, the app reports "uncertain"; it never guesses. See §4.4.
 - Fixed cameras only for now. Head-mounted cameras come later.
 - The Decisions API "track referee" (§4.5) gets built but stays **off by default** until it's tested on the staged swap clip.
@@ -95,7 +95,7 @@ Steps 1–5 happen on the tablet; step 6 is one laptop command. The result is th
    - Different cameras that overlap: the hand-over happens in the overlap. Use the shared map (§4.3).
    - Different cameras with no overlap: enter a **travel time range**, e.g. 2–30 s (default 0–60).
 5. **Capture a background frame** per camera with the counters empty. This is used only by the fallback in §4.1.
-6. **Shared map** (§4.3): for each camera, tap 4 points on the counter or floor and the same 4 points on the floor plan.
+6. **Shared map** (§4.3): for each camera, tap 4 points **on the counter top** and the same 4 points on the floor plan.
 
 **Example flows**
 
@@ -252,9 +252,12 @@ Each unit has exactly one state at a time:
   - One candidate: it is assigned. Several: the oldest is assigned and **flagged uncertain among {X, Y}**.
   - If nothing arrives before the maximum travel time, the app raises `unit_lost (last seen A, t)`.
 - **Shared map (in scope).**
-  - At setup, 4 tapped points per camera on the counter or floor are matched to the floor plan. This gives each camera a homography (a flat-plane mapping) onto the plan.
-  - Every box (bottom-centre, on the counter plane) and every person (feet, on the floor plane) gets **map coordinates**.
-  - The custody rules then run on the map instead of per camera.
+  - At setup, 4 tapped points per camera **on the counter top** are matched to the floor plan. This gives each camera a homography (a flat-plane mapping) onto the plan.
+  - A homography is exact only for points on the surface it was built from. Anything higher or lower lands off by about `distance from camera × height difference / (camera height − surface height)`. Example: a camera 2.5 m up, a box on a 0.9 m counter 2 m away, mapped with a floor mapping, lands about 1.1 m off.
+  - So the mapping is built **on the counter**, because boxes sit on counters. Every box centre gets **map coordinates**.
+  - Carried boxes (at hand height, about 1 m) are close to counter height. Matching uses a tolerance (0.5 m) plus "seen within 1 s".
+  - People are followed in the image only, so no floor mapping is needed. We add one (`camera.floor`, already in the config format) only if the recordings show carriers lost across overlapping cameras. A camera that sees counters at different heights would need one mapping per surface.
+  - Overlapping cameras hand units over by map position.
   - Overlapping cameras hand units over by map position. When one camera's view is blocked, another may still see the box.
   - This is the 2D, flat-surface version of the CTO's 3D idea.
   - Effort: 1–1.5 days.
@@ -285,11 +288,11 @@ Decided 2026-10-29: build it, keep it off by default, and turn it on only if it 
 
 The referee corrects **identity, not positions**. The Decisions API only answers yes/no with a probability, so it can't return box coordinates.
 
-1. **Trigger.** It runs only when custody can't decide:
-   - a track was lost and neither the "parked" nor the "carried" rule fits;
-   - two containers are close together while a person overlaps them;
-   - a track jumps more than 2 box sizes in one frame;
-   - a new track starts where another one just vanished.
+1. **Trigger.** It runs only when custody can't decide. Built (2026-10-29):
+   - **uncertain:** a box was bound with several candidate units (e.g. identical boxes arriving from transit);
+   - **crossed:** two bound boxes came within 0.8 box sizes of each other while one person touched both, then separated (the tracker may have swapped them).
+
+   Not built: "a track jumps more than 2 box sizes" (the tracker's distance pass already limits jumps to 1 box size) and "a new track starts where another vanished" (the parked rule covers it).
 2. **Images sent:**
    - the frame *before*, with known units labelled **A, B** on coloured boxes;
    - 1–2 frames *during*;
@@ -300,6 +303,12 @@ The referee corrects **identity, not positions**. The Decisions API only answers
 6. **What it can't do:** fix a swap that no camera saw (§4.4).
 
 Every referee call is logged (images, answers, chosen assignment) in `referee_calls.jsonl` so it can be checked by hand.
+
+**Implementation notes (2026-10-29).**
+- If the referee gives a box to another unit, the unit that had it goes back to where it was before (e.g. still in transit), so it can still arrive later.
+- An answer that comes back after the second box was already bound swaps both bindings.
+- Measured on one probe (two images, pizza clip): 3.8 s and $0.00015 per call. It told two different pizzas apart by their toppings (0.98 vs 0.58), not by position. Identical closed boxes still have to be tried on recording R3.
+- `--probe-referee` on the laptop replay asks it about hand-picked frames of any recording, to see what it can tell apart on a site's own boxes before turning it on.
 
 **Outputs of Steps 2 + 3**
 - Events: `unit_packed`, `unit_entered {zone}`, `unit_carried {person}`, `unit_transit`, `unit_lost`, `unit_uncertain {candidates}`, `unit_identified {code}`.

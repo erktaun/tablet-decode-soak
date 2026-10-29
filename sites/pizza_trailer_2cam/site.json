@@ -1,0 +1,19 @@
+{
+ "site": "pizza_trailer_2cam",
+ "note": "Synthetic two-camera site: the pizza_trailer clip played as two cameras (crops). camA sees the make line and oven, camB the boxing counter, pass and customer window. The crops overlap by 40 px.",
+ "cameras": [
+  {"name": "camA", "url": "file:pizza_trailer.mp4", "width": 500, "height": 570, "fps": 5, "crop": [200, 150, 700, 720]},
+  {"name": "camB", "url": "file:pizza_trailer.mp4", "width": 620, "height": 520, "fps": 5, "crop": [660, 200, 1280, 720], "ignore": [[[430, 70], [620, 70], [620, 220], [430, 220]]]}
+ ],
+ "zones": [
+  {"name": "make_line", "camera": "camA", "role": "assembly", "poly": [[140, 180], [360, 180], [345, 450], [100, 450]]},
+  {"name": "oven", "camera": "camA", "role": "hold", "poly": [[290, 80], [420, 80], [420, 180], [290, 180]]},
+  {"name": "boxing", "camera": "camB", "role": "packing", "poly": [[30, 120], [140, 120], [140, 280], [30, 280]]},
+  {"name": "pass", "camera": "camB", "role": "checkout", "poly": [[130, 170], [200, 170], [200, 250], [130, 250]]},
+  {"name": "customer", "camera": "camB", "role": "customer", "poly": [[280, 140], [440, 140], [440, 280], [280, 280]], "for": "pass"}
+ ],
+ "flow": ["make_line", "oven", "boxing", "pass"],
+ "links": [{"from": "make_line", "to": "boxing", "travel_s": [30, 400]}],
+ "classes": {"base": ["pizza"], "open_container": ["open box"], "closed_container": [], "person": ["person"]},
+ "assembly": {"mode": "packed_after", "done": "leaves_zone"}
+}

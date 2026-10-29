@@ -1,0 +1,15 @@
+{
+  "ingredients": [
+    {"name": "tomato sauce", "look": "red sauce spread over the dough base"},
+    {"name": "mozzarella",   "look": "small white cubes or torn white pieces of cheese"},
+    {"name": "cooked ham",   "look": "large thin pale-pink slices or torn strips of cooked ham laid flat", "confusable_with": "salami (round dark-red slices)"},
+    {"name": "salami",       "look": "round dark-red slices with white fat specks"},
+    {"name": "mushrooms",    "look": "thin grey-brown mushroom slices"},
+    {"name": "basil",        "look": "fresh green basil leaves"},
+    {"name": "black olives", "look": "small black olive rings"}
+  ],
+  "recipes": [
+    {"name": "Prosciutto cotto", "ingredients": ["tomato sauce", "mozzarella", "cooked ham"]},
+    {"name": "Margherita",       "ingredients": ["tomato sauce", "mozzarella"]}
+  ]
+}

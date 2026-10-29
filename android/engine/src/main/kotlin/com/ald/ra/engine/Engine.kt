@@ -69,6 +69,8 @@ class Engine(
     orders: List<Order>,
     private val runner: CheckRunner,
     val log: EventLog = EventLog(),
+    refereeRunner: RefereeRunner? = null,
+    painter: Painter? = null,
 ) {
     val p = site.params
     val orders = orders.sortedBy { it.t }.toMutableList()
@@ -84,6 +86,10 @@ class Engine(
         CheckoutStation(this, z, site.zones.firstOrNull { it.role == Role.CUSTOMER && (it.forZone == z.name || it.forZone == null) })
     }
     val custody = Custody(this)
+    /** The track referee, when `params.referee` is on and the host can draw frames and make calls. */
+    val referee = if (p.referee && refereeRunner != null && painter != null) RefereeDesk(this, refereeRunner, painter).also { d ->
+        custody.onUncertain = d::uncertain; custody.onCrossed = d::crossed
+    } else null
 
     fun customerNear(checkoutZone: String, t: Double) = checkout.firstOrNull { it.zone.name == checkoutZone }?.customerNear(t) == true
     fun hasCustomerZone(checkoutZone: String) = checkout.firstOrNull { it.zone.name == checkoutZone }?.hasCustomerZone == true
@@ -114,6 +120,13 @@ class Engine(
 
     /** Schedule a check result to be applied once the stream reaches the time a live system would have it. */
     fun submit(req: CheckRequest, apply: (CheckResult?) -> Unit) {
+        runner.submit(req) { res ->
+            synchronized(ready) { ready += Ready(req.t + (res?.latencyS ?: 0.0)) { apply(res) } }
+        }
+    }
+
+    /** Same for a referee call. */
+    fun later(runner: RefereeRunner, req: RefereeRequest, apply: (RefereeResult?) -> Unit) {
         runner.submit(req) { res ->
             synchronized(ready) { ready += Ready(req.t + (res?.latencyS ?: 0.0)) { apply(res) } }
         }
