@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "soak"
 include(":app")
+include(":engine")
